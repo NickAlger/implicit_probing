@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "implicit_probing"
+version = "2026.0.0"
+description = "Derivative probing of maps defined implicitly through a state equation (Algorithms 1 & 2 of the T4S paper)"
+requires-python = ">=3.9"
+# Minimal dependencies by design. The pure-Python symbolic engine needs none; numpy is for the
+# numeric driver (forthcoming). Autodiff-framework hooks (JAX, FEniCS) will be optional extras so
+# users only install the frameworks they actually use.
+dependencies = [
+    "numpy",
+]
+authors = [
+  {name = "Nick Alger", email = "nalger225@gmail.com"},
+  {name = "Blake Christierson", email = "bechristierson@utexas.edu"},
+]
+maintainers = [
+  {name = "Nick Alger", email = "nalger225@gmail.com"},
+]
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+keywords = [
+  "derivatives", "adjoint method", "implicit function theorem",
+  "PDE-constrained", "tensor probing", "Taylor series", "automatic differentiation",
+]
+classifiers = [
+  "Programming Language :: Python",
+]
+
+[project.optional-dependencies]
+jax = ["jax"]
+
+[project.urls]
+Homepage = "https://github.com/NickAlger/implicit_probing"
+Repository = "https://github.com/NickAlger/implicit_probing"
+"Bug Tracker" = "https://github.com/NickAlger/implicit_probing/issues"
+
+[tool.setuptools.packages.find]
+include = ["implicit_probing*"]
