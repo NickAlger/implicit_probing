@@ -56,6 +56,9 @@ C = MatrixOperator(P)   # apply = P @ v,  apply_transpose = P.T @ v
 
 For FEniCS, you typically write small operators of your own — e.g. an input map that builds a
 `theta` Function from feature coefficients, and an output selection that reads off the boundary dofs.
-Worked examples of both are in `tests/test_fenics_composition.py` (boundary-dof selection `W` and a
-polynomial-feature parameterization `C`), validated against finite differences and the reverse
-adjointness identity.
+A complete worked example is **`examples/fenics_composition.py`**: `theta` parameterized by low-order
+polynomial features and the observation restricted to the boundary, reducing a 2401-dof input / 5329+-
+dof output PDE map to a 6-feature / 25-boundary-value map. It probes the composed map, validates the
+forward probes against finite differences and the reverse probes against the adjointness identity, and
+prints the QoI gradient with respect to each feature. (`tests/test_fenics_composition.py` is the gated
+regression test of the same setup.)

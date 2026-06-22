@@ -99,8 +99,9 @@ observation test function CG1) to catch space-conflation bugs.
   Plus a `LinearOperator` protocol and a `MatrixOperator` (numpy) adapter.
 - Tests: `tests/backend/test_composition.py` (toy: numpy `C`/`W` vs FD, reverse adjointness on the
   composed map, identity-maps recover the inner) and `tests/test_fenics_composition.py` (gated: theta
-  from low-order polynomial features + observation restricted to boundary dofs). Docs:
-  `docs/composition.md`.
+  from low-order polynomial features + observation restricted to boundary dofs). Example:
+  `examples/fenics_composition.py` (the same FEniCS setup, with the dimension-reduction story + the
+  per-feature QoI gradient). Docs: `docs/composition.md`.
 
 ## Design decisions locked
 
