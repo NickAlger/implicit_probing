@@ -23,7 +23,7 @@ unchanged, and compositions nest.
 import dataclasses
 import typing as typ
 
-from implicit_probing.backend.driver import OMEGA  # noqa: F401  (kept: documents the pairing the inner resolves)
+from implicit_probing.driver import OMEGA  # noqa: F401  (kept: documents the pairing the inner resolves)
 
 __all__ = ['LinearOperator', 'MatrixOperator', 'ComposedProblem']
 

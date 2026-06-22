@@ -8,8 +8,7 @@ the input and/or output:
 - the **output** of interest is a linear function `z = W obs` of the raw observation (e.g. a selection
   matrix that restricts a FEniCS observation vector to the boundary dofs it is actually supported on).
 
-`implicit_probing.backend.composition.ComposedProblem` lets you probe the composed map
-`f = W o q o C` directly.
+`implicit_probing.ComposedProblem` lets you probe the composed map `f = W o q o C` directly.
 
 ## Why it's cheap and exact
 
@@ -29,8 +28,7 @@ reverse probe by `C^T`, and pull the output functional back by `W^T`.
 ## Using it
 
 ```python
-from implicit_probing.backend.composition import ComposedProblem
-from implicit_probing.backend.driver import probe
+from implicit_probing import ComposedProblem, probe
 
 composed = ComposedProblem(inner_problem, input_map=C, output_map=W)   # f = W o q o C
 forward, reverse = probe(composed, alpha, x_directions, omega)
@@ -50,7 +48,7 @@ forward, reverse = probe(composed, alpha, x_directions, omega)
 toy; PETSc vectors / DOLFINx Functions for FEniCS). For a plain matrix there is a ready-made adapter:
 
 ```python
-from implicit_probing.backend.composition import MatrixOperator
+from implicit_probing import MatrixOperator
 C = MatrixOperator(P)   # apply = P @ v,  apply_transpose = P.T @ v
 ```
 

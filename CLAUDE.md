@@ -46,12 +46,20 @@ give the setting and notation. **The math, in brief:**
 
 ## Architecture
 
-**Pure-functional backend now; thin OO frontend later** (added once the numerics work).
+**Flat, pure-functional package.** Small stateless modules at the top level of `implicit_probing/`,
+each with its own `__all__`; the public names are re-exported from `implicit_probing/__init__.py`, so
+the common path is one flat import (`from implicit_probing import probe, ImplicitProblem, Multiset`).
+There is no backend/frontend split and no separate OO layer planned — the `probe(...)` free function
+plus the `ImplicitProblem` protocol already *is* the API.
 
-- `implicit_probing/backend/` — stateless functions, each module with its own `__all__`.
 - The symbolic engine (Algorithm 1) is **pure Python, no numpy**: it manipulates multisets and
   dictionaries of symbolic terms. This is the novel core, unit-tested against the paper's hand-derived
   expansions.
+- **Dependency isolation is a property of the import graph, not the layout.** The whole probing
+  machinery (`multiset`, `symbolic`, `driver`, `composition`) is dependency-free, so `__init__` pulls
+  in nothing but the stdlib; numpy enters only through `reference_problems`. Concrete hooks with heavy
+  deps (`fenics`, future `jax`) live in their own modules, imported explicitly (`implicit_probing.fenics`)
+  and never from `__init__`, so a missing dep only bites when that hook is actually touched.
 
 ### Symbolic term representation (Algorithm 1)
 
@@ -70,14 +78,14 @@ single-direction rule is t4s.pdf eqs (19)-(20); the lattice traversal is Algorit
 
 ### The driver and problem interface (Algorithm 2)
 
-`backend/driver.py` is the numeric driver: `probe(problem, alpha, direction_vectors)` walks the
+`driver.py` is the numeric driver: `probe(problem, alpha, direction_vectors)` walks the
 lattice and returns `(forward, reverse)` probes for every `beta <= alpha` (forward -> output vector;
 reverse -> parameter covector). It is **vector-type agnostic** — it does no arithmetic on physics
 vectors, only lowering symbolic terms to `PartialTerm` requests, handing whole sums to the problem,
 and routing the opaque results. A problem implements the 3-method `ImplicitProblem` protocol:
 `solve_operator` (`A x = b`), `solve_operator_adjoint` (`A* x = c`), and `assemble_partial_sum`
-(assemble a *whole sum* of partial-derivative terms — requesting sums, not singletons, lets a backend
-like FEniCS assemble one combined form). `reference_problems.py` (top-level, numpy) holds the toy
+(assemble a *whole sum* of partial-derivative terms — requesting sums, not singletons, lets a hook
+like FEniCS assemble one combined form). `reference_problems.py` (numpy) holds the toy
 implicit map + the exact-derivative `Polynomial` + a finite-difference ground truth;
 `ImplicitPolynomialProblem` is the reference implementation of the interface.
 
@@ -90,7 +98,7 @@ Mirror T3Toolbox's conventions:
   (`reference_problems.py`, future hooks) follows this; the symbolic engine and the vector-agnostic
   driver are non-array code, so shape comments mostly don't apply there.
 - File header block: `# Authors / # Copyright / # Github`.
-- One `__all__` per backend module.
+- One `__all__` per module.
 - Cite the t4s.pdf equation/algorithm number in the docstring when code implements one.
 - House philosophy: **structural problems raise unconditionally** (wrong shape/inconsistent lengths);
   numerical preconditions are a later concern. No auto-formatter near the deliberately-aligned style.
@@ -101,7 +109,7 @@ Mirror T3Toolbox's conventions:
   and the numeric probes (Algorithm 2) vs an independent finite-difference ground truth
   (`reference_problems.forward_probe_by_finite_difference`), swept over symmetric / partial /
   asymmetric probes.
-- `unittest` in `tests/` (mirrors the package as `tests/backend/`). Pattern: `subTest` over cases.
+- `unittest` in `tests/` (flat, mirroring the flat package). Pattern: `subTest` over cases.
 - **Run** with the maintainer's env Python and `PYTHONPATH=$PWD`:
   `PYTHONPATH=$PWD <env-python> -m pytest tests/ -q`. (The env path is maintainer-local; see
   `~/.claude/`.)
@@ -117,8 +125,9 @@ Mirror T3Toolbox's conventions:
 ## Current state
 
 **Algorithms 1 & 2 are implemented and validated — the method runs end-to-end.** The symbolic engine
-(`backend/multiset.py`, `backend/symbolic.py`) and the numeric driver (`backend/driver.py`) are done;
-the toy reference problem + finite-difference ground truth (`reference_problems.py`) validate the
-driver's probes across symmetric / partial / asymmetric symmetries (~1e-9). User-facing tour in
-`docs/overview.md`. Full suite green (`pytest tests/ -q`). No core algorithm work remains; next
-candidates are FEniCS/JAX problem hooks, the thin OO frontend, and examples. See `dev/HANDOFF.md`.
+(`multiset.py`, `symbolic.py`) and the numeric driver (`driver.py`) are done; the toy reference problem
++ finite-difference ground truth (`reference_problems.py`) validate the driver's probes across
+symmetric / partial / asymmetric symmetries (~1e-9). FEniCS/DOLFINx hook (`fenics.py`) + linear
+composition (`composition.py`) done. User-facing tour in `docs/overview.md`. Full suite green
+(`pytest tests/ -q`). No core algorithm work remains; next candidates are a JAX hook and bringing
+reference/example content into the library. See `dev/HANDOFF.md`.

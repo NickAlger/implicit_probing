@@ -23,8 +23,8 @@ mixed-``R``/``Q`` -- sum to the problem keeps even the cross-term additions out 
 import dataclasses
 import typing as typ
 
-from implicit_probing.backend.multiset import Multiset, subset_lattice
-from implicit_probing.backend.symbolic import (
+from implicit_probing.multiset import Multiset, subset_lattice
+from implicit_probing.symbolic import (
     ID, OMEGA as _SYMBOLIC_OMEGA,
     seed_forward_q, seed_residual_r, seed_reverse,
     differentiate_over_lattice, extract_state_rhs, extract_adjoint_rhs,

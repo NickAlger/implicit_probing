@@ -7,7 +7,7 @@ A derivative probe of an implicitly-defined map expands, via the chain rule and 
 theorem, into a sum of directional *partial* derivatives of the output map ``Q`` and the state
 residual ``R``, contracted against incremental state variables (and, for reverse probes, incremental
 adjoints). This module generates those expansions *symbolically* — it produces the algebraic formulas,
-not any numbers. The numeric driver (Algorithm 2, forthcoming) consumes them.
+not any numbers. The numeric driver (Algorithm 2, ``driver.py``) consumes them.
 
 Symbolic term ``(rho, tau, mu, Gamma)`` (``Term``) represents
 
@@ -37,7 +37,7 @@ import collections
 import dataclasses
 import typing as typ
 
-from implicit_probing.backend.multiset import Multiset, subset_lattice
+from implicit_probing.multiset import Multiset, subset_lattice
 
 __all__ = [
     'Pairing', 'ID', 'OMEGA', 'adjoint',

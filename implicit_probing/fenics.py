@@ -31,7 +31,7 @@ from petsc4py import PETSc
 from dolfinx import fem
 import dolfinx.fem.petsc as petsc_fem
 
-from implicit_probing.backend.driver import OMEGA
+from implicit_probing.driver import OMEGA
 
 __all__ = ['FenicsImplicitProblem']
 

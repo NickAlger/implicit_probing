@@ -38,9 +38,10 @@ complementary side of the T4S method).
 
 ## Status
 
-Early development. Implemented so far: the **symbolic differentiation engine** (Algorithm 1) — the
-pure-Python core that generates the probe expansions. The numeric driver (Algorithm 2), a problem
-interface, and autodiff-framework hooks are forthcoming.
+Early development. Implemented and validated end-to-end: the **symbolic differentiation engine**
+(Algorithm 1) and the **numeric driver** (Algorithm 2), the `ImplicitProblem` interface with a numpy
+reference implementation, a **FEniCS/DOLFINx hook**, and linear input/output composition. A JAX hook is
+forthcoming.
 
 ## Authors
 

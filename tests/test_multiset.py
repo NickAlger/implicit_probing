@@ -4,7 +4,7 @@
 import math
 import unittest
 
-from implicit_probing.backend.multiset import Multiset, subset_lattice
+from implicit_probing.multiset import Multiset, subset_lattice
 
 
 class TestMultiset(unittest.TestCase):

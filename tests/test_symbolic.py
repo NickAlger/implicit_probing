@@ -3,9 +3,9 @@
 # Github: https://github.com/NickAlger/implicit_probing
 import unittest
 
-from implicit_probing.backend.multiset import Multiset, subset_lattice
-from implicit_probing.backend import symbolic as sym
-from implicit_probing.backend.symbolic import Term, ID, OMEGA, adjoint
+from implicit_probing.multiset import Multiset, subset_lattice
+from implicit_probing import symbolic as sym
+from implicit_probing.symbolic import Term, ID, OMEGA, adjoint
 
 
 def ms(*xs):

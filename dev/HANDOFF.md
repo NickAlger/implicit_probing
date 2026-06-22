@@ -5,13 +5,13 @@
 **Slice 1 complete: the symbolic differentiation engine (Algorithm 1, t4s.pdf Section 4).** Pure
 Python, no numpy.
 
-- `implicit_probing/backend/multiset.py` — immutable, hashable `Multiset` (elements may themselves be
+- `implicit_probing/multiset.py` — immutable, hashable `Multiset` (elements may themselves be
   `Multiset`s) + `subset_lattice` (every sub-multiset of `alpha`, nondecreasing cardinality).
-- `implicit_probing/backend/symbolic.py` — `Pairing` (`ID` / `OMEGA` / `adjoint(delta)`), `Term`
+- `implicit_probing/symbolic.py` — `Pairing` (`ID` / `OMEGA` / `adjoint(delta)`), `Term`
   `(rho, tau, mu, Gamma)`, the three seeds (`seed_forward_q`, `seed_residual_r`, `seed_reverse`),
   `differentiate_term` (eqs 19-20), and `differentiate_over_lattice` (Algorithm 1). Plus
   `format_term` / `format_expansion` for human-readable debugging output.
-- Tests: `tests/backend/test_multiset.py`, `tests/backend/test_symbolic.py` — validated against the
+- Tests: `tests/test_multiset.py`, `tests/test_symbolic.py` — validated against the
   paper's worked example `D^2 q theta_1^2` (Section 4.2), the reverse seed + adjoint-order raise (eq
   20), the step-(19c) multiplicity factor, the isolated `A uhat_beta` residual term, and lattice
   sizes `prod(alpha_i + 1)`.
@@ -38,9 +38,9 @@ Python, no numpy.
 
 **Slice 2 complete: the numeric driver (Algorithm 2) — the core method now runs end-to-end.**
 
-- `implicit_probing/backend/symbolic.py` (added) — `extract_state_rhs` / `extract_adjoint_rhs`:
+- `implicit_probing/symbolic.py` (added) — `extract_state_rhs` / `extract_adjoint_rhs`:
   isolate the operator term (`A uhat_beta` / `A* vhat_beta`) and return the rest (eqs 10-11, 17-18).
-- `implicit_probing/backend/driver.py` — the **vector-type-agnostic** driver:
+- `implicit_probing/driver.py` — the **vector-type-agnostic** driver:
   - `PartialTerm` — the lowered request DTO: `(coefficient, function R/Q, theta_dirs, u_vecs,
     open_slot in {None,'theta','u'}, pairing in {None, OMEGA, vhat-vector})`.
   - `OMEGA` — sentinel meaning "pair the output with the problem's omega functional".
@@ -52,7 +52,7 @@ Python, no numpy.
 - `implicit_probing/reference_problems.py` (extended) — `Polynomial.derivative_open_slot` (one open
   derivative slot) and the `ImplicitProblem` hook on the toy (`solve_operator` /
   `solve_operator_adjoint` / `assemble_partial_sum`), a reference implementation of the interface.
-- Tests `tests/backend/test_driver.py` — extraction unit tests, probe structure, and the driver's
+- Tests `tests/test_driver.py` — extraction unit tests, probe structure, and the driver's
   probes vs the FD ground truth across symmetric / partially-symmetric / fully-asymmetric probes
   (orders 1-3, ~1e-9 agreement), reverse-probe identity `psi_beta . d = omega(D^{|beta|+1} q)`, and
   the order-4 vanishing-top-partial edge case.
@@ -92,12 +92,12 @@ observation test function CG1) to catch space-conflation bugs.
   forward probes only (skips the adjoint solves + reverse pass). The `OMEGA` sentinel stays in
   `PartialTerm.pairing` so a problem can tell an output-functional pairing from an incremental adjoint
   -- which is exactly what composition relies on.
-- `implicit_probing/backend/composition.py` -- `ComposedProblem(inner, input_map=C, output_map=W)`
+- `implicit_probing/composition.py` -- `ComposedProblem(inner, input_map=C, output_map=W)`
   probes the composed map `f = W o q o C` for linear input/output maps: pre-maps directions by `C`,
   post-maps a forward probe by `W` and a reverse probe by `C^T`, pulls `omega` back by `W^T`. The
   inner problem and the driver are unchanged; it is itself an `ImplicitProblem`, so compositions nest.
   Plus a `LinearOperator` protocol and a `MatrixOperator` (numpy) adapter.
-- Tests: `tests/backend/test_composition.py` (toy: numpy `C`/`W` vs FD, reverse adjointness on the
+- Tests: `tests/test_composition.py` (toy: numpy `C`/`W` vs FD, reverse adjointness on the
   composed map, identity-maps recover the inner) and `tests/test_fenics_composition.py` (gated: theta
   from low-order polynomial features + observation restricted to boundary dofs). Example:
   `examples/fenics_composition.py` (the same FEniCS setup, with the dimension-reduction story + the
@@ -107,8 +107,19 @@ observation test function CG1) to catch space-conflation bugs.
 
 - Package / repo / import name: `implicit_probing` (GitHub renamed; local `origin` updated; local
   directory renamed to `implicit_probing` to match — repo, import package, and folder now all agree).
-- Pure functional backend now; thin OO frontend later.
-- Deps: `numpy` required (for slice 2+), `jax` an optional extra; **no T3Toolbox dependency**.
+- **Flat, pure-functional package** (refactored from the original `backend/` subpackage). Small
+  top-level modules (`multiset`, `symbolic`, `driver`, `composition`, `reference_problems`, `fenics`);
+  the public API is re-exported from `implicit_probing/__init__.py` (`probe`, `ImplicitProblem`,
+  `PartialTerm`, `OMEGA`, `Multiset`, `subset_lattice`, `ComposedProblem`, `LinearOperator`,
+  `MatrixOperator`). **No backend/frontend split and no separate OO frontend** — the `probe(...)` free
+  function plus the `ImplicitProblem` protocol is the API (this supersedes the original "backend now,
+  OO frontend later" plan). Dependency isolation comes from the import graph: `__init__` imports only
+  the dependency-free + numpy modules, so `import implicit_probing` needs nothing but the stdlib;
+  `fenics` (and a future `jax`) are explicit submodule imports, never pulled in by `__init__`.
+  `reference_problems` stays an explicit `implicit_probing.reference_problems` import (numpy-only),
+  not in the top-level `__all__`.
+- Deps: `numpy` required (used by `reference_problems`; the probing core needs none), `jax` an optional
+  extra; **no T3Toolbox dependency**.
 - `theta_0` will be a first-class input (multi-point gathering = trivial outer loop), for the
   maintainer's future global-polynomial work.
 
@@ -119,8 +130,10 @@ differences. Candidate next slices (maintainer to choose):
 
 1. **Autodiff-framework hooks.** FEniCS/DOLFINx hook **done** (`fenics.py`, see above). Remaining: a
    **JAX** hook (nested `jvp`/`jacfwd`), as an optional pip extra.
-2. **Thin OO frontend.** Now that the functional backend works, add the light OO layer (e.g. an
-   `ImplicitProblem` base/adapters + a top-level `probe(...)` entry point) per the original plan.
+2. **Bring reference/example content into the library.** Per discussion: the FEniCS example/test
+   setup (and the toy reference problem) likely have reusable pieces worth promoting into library
+   helpers — to be scoped next. (The original "thin OO frontend" slice is dropped; the functional API
+   stands as the API.)
 3. **Examples + more docs.** Done: `docs/overview.md`, `examples/fenics_poisson.py`,
    `docs/fenics_hook.md`. Still wanted: a toy-only example script and a Sphinx build.
 4. **Probe-to-tensor bridge (optional).** Package the forward/reverse probes into whatever a

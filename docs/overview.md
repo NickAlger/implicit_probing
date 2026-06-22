@@ -40,21 +40,28 @@ use (surrogate fitting, optimization, etc.).
 
 ## How the code is organized
 
-A pure-functional backend (`implicit_probing.backend`), with the toy problem at the top level:
+The probing machinery is a set of small, pure-functional modules at the top level of the package. The
+names you use are re-exported from `implicit_probing` directly, so the common path is one flat import:
+`from implicit_probing import probe, ImplicitProblem, Multiset`. Concrete problems live in their own
+modules, imported explicitly so their dependencies stay optional.
 
 | module | role |
 | --- | --- |
-| `backend.multiset` | `Multiset` and `subset_lattice` — the index sets the probes are organized over. |
-| `backend.symbolic` | **Algorithm 1**: a pure-symbolic engine that works out *which* partial derivatives of `R` and `Q` each probe is a sum of. No numbers. |
-| `backend.driver` | **Algorithm 2**: `probe(...)`, which walks the lattice, asks your problem to do the solves and assemble the partial-derivative sums, and returns the probes. |
-| `reference_problems` | a toy implicit map (`make_toy_problem`) with exact derivatives, plus a finite-difference ground truth — for testing and as a worked example of the problem interface. |
+| `multiset` | `Multiset` and `subset_lattice` — the index sets the probes are organized over. |
+| `symbolic` | **Algorithm 1**: a pure-symbolic engine that works out *which* partial derivatives of `R` and `Q` each probe is a sum of. No numbers. |
+| `driver` | **Algorithm 2**: `probe(...)`, which walks the lattice, asks your problem to do the solves and assemble the partial-derivative sums, and returns the probes. |
+| `composition` | `ComposedProblem` — probe `W ∘ q ∘ C` for linear input/output maps `C`, `W` (see `composition.md`). |
+| `reference_problems` | a toy implicit map (`make_toy_problem`) with exact derivatives, plus a finite-difference ground truth — for testing and as a worked example of the problem interface. Imported explicitly (`implicit_probing.reference_problems`); needs numpy. |
+
+The probing machinery itself does no arithmetic on physics vectors, so the top-level
+`import implicit_probing` pulls in nothing but the standard library; numpy loads only when you reach
+for `reference_problems` (or your own numpy-backed problem).
 
 ## Using it on the built-in toy
 
 ```python
 import numpy as np
-from implicit_probing.backend.multiset import Multiset
-from implicit_probing.backend.driver import probe
+from implicit_probing import Multiset, probe
 from implicit_probing.reference_problems import make_toy_problem
 
 problem = make_toy_problem()        # q(theta) = Q(theta, u(theta)), R(theta, u) = 0; theta in R^2
@@ -90,7 +97,7 @@ quantity of interest, not a property of the problem. It is needed only for the r
 ## Using it on your own problem
 
 `probe` is generic. To run it on your model, pass an object implementing the
-`implicit_probing.backend.driver.ImplicitProblem` interface — three methods:
+`implicit_probing.ImplicitProblem` interface — three methods:
 
 ```python
 class ImplicitProblem(Protocol):

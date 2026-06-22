@@ -25,8 +25,8 @@ conditions. The class never runs a nonlinear solve. It only assembles the linear
 `A = d_u R` once and turns derivative-probe requests into UFL forms.
 
 ```python
+from implicit_probing import probe
 from implicit_probing.fenics import FenicsImplicitProblem
-from implicit_probing.backend.driver import probe
 
 problem = FenicsImplicitProblem(R_form, Q_form, theta, u, bcs=[bc_homog])
 forward, reverse = probe(problem, alpha, direction_vectors, omega)

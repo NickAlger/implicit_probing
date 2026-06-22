@@ -32,9 +32,7 @@ from petsc4py import PETSc
 from dolfinx import mesh, fem
 import dolfinx.fem.petsc as petsc_fem
 
-from implicit_probing.backend.multiset import Multiset, subset_lattice
-from implicit_probing.backend.driver import probe
-from implicit_probing.backend.composition import ComposedProblem
+from implicit_probing import Multiset, subset_lattice, probe, ComposedProblem
 from implicit_probing.fenics import FenicsImplicitProblem
 
 comm = MPI.COMM_WORLD

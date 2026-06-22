@@ -3,7 +3,7 @@
 # Github: https://github.com/NickAlger/implicit_probing
 """Toy implicitly-defined maps with exact derivatives, for testing the probing algorithms.
 
-A reference problem supplies everything the derivative-probing driver (Algorithm 2, forthcoming)
+A reference problem supplies everything the derivative-probing driver (Algorithm 2, ``driver.py``)
 asks of a problem:
 
 - ``solve_state(theta)``           -> solve the state equation ``R(theta, u) = 0`` for ``u``;
@@ -38,7 +38,7 @@ import typing as typ
 import numpy as np
 from numpy.typing import NDArray
 
-from implicit_probing.backend.driver import OMEGA, PartialTerm
+from implicit_probing.driver import OMEGA, PartialTerm
 
 __all__ = [
     'Polynomial',
@@ -274,7 +274,7 @@ class ImplicitPolynomialProblem:
         dirs = [self.lift_theta(d) for d in theta_dirs] + [self.lift_u(v) for v in u_vecs]
         return self.Q.derivative(self.w0, dirs)
 
-    # --- the backend.driver.ImplicitProblem interface (a reference implementation of the hook) ---
+    # --- the driver.ImplicitProblem interface (a reference implementation of the hook) ---
 
     def solve_operator(self, b: NDArray) -> NDArray:          # A x = b
         return self.solve_A(b)

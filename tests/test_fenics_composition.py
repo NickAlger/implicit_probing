@@ -19,9 +19,9 @@ from dolfinx import mesh, fem
 import dolfinx.fem.petsc as petsc_fem
 from petsc4py import PETSc
 
-from implicit_probing.backend.multiset import Multiset, subset_lattice
-from implicit_probing.backend.driver import probe
-from implicit_probing.backend.composition import ComposedProblem
+from implicit_probing.multiset import Multiset, subset_lattice
+from implicit_probing.driver import probe
+from implicit_probing.composition import ComposedProblem
 from implicit_probing.fenics import FenicsImplicitProblem
 
 _STENCILS = {1: ((-1, 1), (-0.5, 0.5)), 2: ((-1, 0, 1), (1.0, -2.0, 1.0)),

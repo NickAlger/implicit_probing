@@ -17,8 +17,8 @@ from dolfinx import mesh, fem
 import dolfinx.fem.petsc as petsc_fem
 from petsc4py import PETSc
 
-from implicit_probing.backend.multiset import Multiset, subset_lattice
-from implicit_probing.backend.driver import probe
+from implicit_probing.multiset import Multiset, subset_lattice
+from implicit_probing.driver import probe
 from implicit_probing.fenics import FenicsImplicitProblem
 
 # Central finite-difference stencils for the m-th derivative (offsets, weights), error O(h^2).

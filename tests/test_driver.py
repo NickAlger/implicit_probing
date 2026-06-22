@@ -5,13 +5,13 @@ import unittest
 
 import numpy as np
 
-from implicit_probing.backend.multiset import Multiset, subset_lattice
-from implicit_probing.backend.symbolic import (
+from implicit_probing.multiset import Multiset, subset_lattice
+from implicit_probing.symbolic import (
     Term, ID, OMEGA, adjoint,
     seed_residual_r, seed_reverse, differentiate_over_lattice,
     extract_state_rhs, extract_adjoint_rhs,
 )
-from implicit_probing.backend.driver import PartialTerm, probe
+from implicit_probing.driver import PartialTerm, probe
 from implicit_probing.reference_problems import make_toy_problem, forward_probe_by_finite_difference
 
 

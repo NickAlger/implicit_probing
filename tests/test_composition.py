@@ -5,9 +5,9 @@ import unittest
 
 import numpy as np
 
-from implicit_probing.backend.multiset import Multiset, subset_lattice
-from implicit_probing.backend.driver import probe
-from implicit_probing.backend.composition import ComposedProblem, MatrixOperator
+from implicit_probing.multiset import Multiset, subset_lattice
+from implicit_probing.driver import probe
+from implicit_probing.composition import ComposedProblem, MatrixOperator
 from implicit_probing.reference_problems import make_toy_problem, forward_probe_by_finite_difference
 
 
