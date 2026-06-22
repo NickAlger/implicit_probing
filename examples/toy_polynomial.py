@@ -19,7 +19,7 @@ Run:
 """
 import numpy as np
 
-from implicit_probing import Multiset, subset_lattice, probe
+from implicit_probing import probe
 from implicit_probing import validation               # finite-difference cross-check (testing only)
 from implicit_probing.reference_problems import make_toy_problem
 
@@ -29,32 +29,33 @@ from implicit_probing.reference_problems import make_toy_problem
 # ====================================================================================================
 problem = make_toy_problem()        # q: R^2 -> R^2 through an implicit 3-dof state u; exact derivatives
 
-# Probe directions are a multiset of *labels* plus the parameter-space vector each label stands for.
-# omega is a covector in the output space -- the quantity of interest the reverse probes differentiate.
-directions = {1: np.array([1.0, 0.3]), 2: np.array([0.4, -0.6])}
+# Directions are (vector, max_power) pairs: probe direction a up to power 2 and b up to power 1 -- i.e.
+# ask for every derivative up to a^2 b^1. omega is a covector in the output space (the QoI).
+a = np.array([1.0, 0.3])
+b = np.array([0.4, -0.6])
+directions = [(a, 2), (b, 1)]
 omega = np.array([1.0, 0.0])
 
 
 # ====================================================================================================
 # PROBING  (implicit_probing)  --  the whole point
 # ====================================================================================================
-# One call returns the forward AND reverse probe for EVERY sub-multiset of alpha: the lower-order
-# probes fall out of the very same shared-operator linear solves, at no extra cost.
-alpha = Multiset([1, 1, 2])         # probe the 3rd derivative in directions (d1, d1, d2)
-forward, reverse = probe(problem, alpha, directions, omega)
+# One call returns the forward AND reverse probe for EVERY sub-probe, keyed by the power-tuple (i, j) =
+# d_s^i d_t^j q(theta0 + s*a + t*b). The lower orders fall out of the same shared-operator solves, free.
+forward, reverse = probe(problem, directions, omega)
 
 
 # ====================================================================================================
 # RESULTS  --  the useful outputs
 # ====================================================================================================
-print("forward probes  D^|beta| q(theta0) applied to beta's directions:")
-for beta in subset_lattice(alpha):
-    label = str(beta) if len(beta) else "{} (= q(theta0))"
-    print(f"  order {len(beta)}  {label:<16} {np.array2string(forward[beta], precision=4)}")
+print("forward probes, keyed by power-tuple (i, j) = differentiation order along (a, b):")
+for mu, value in sorted(forward.items()):
+    note = "   (= q(theta0))" if sum(mu) == 0 else ""
+    print(f"  {str(mu):<8} D^{sum(mu)} q = {np.array2string(value, precision=4)}{note}")
 
-# reverse[empty] is the gradient of the QoI omega(q) w.r.t. theta -- a parameter-space covector got
-# from a single adjoint solve (it gives the sensitivity to *every* direction at once).
-print(f"\nQoI gradient  d omega(q)/d theta  =  {np.array2string(reverse[Multiset([])], precision=4)}")
+# reverse[(0,0)] is the gradient of the QoI omega(q) w.r.t. theta -- a parameter-space covector from a
+# single adjoint solve (the sensitivity to *every* direction at once).
+print(f"\nQoI gradient  d omega(q)/d theta  =  {np.array2string(reverse[(0, 0)], precision=4)}")
 
 
 # ====================================================================================================
@@ -62,14 +63,14 @@ print(f"\nQoI gradient  d omega(q)/d theta  =  {np.array2string(reverse[Multiset
 # only approximate, and are used here purely to demonstrate that the probes are right)
 # ====================================================================================================
 print("\n(cross-check against finite differences -- for confidence only, never how you'd compute these)")
-print(f"  {'beta':<13}{'order':<7}{'rel err vs FD'}")
-for beta in subset_lattice(alpha):
-    if len(beta) == 0:
+print(f"  {'(i,j)':<9}{'order':<7}{'rel err vs FD'}")
+for mu, value in sorted(forward.items()):
+    if sum(mu) == 0:
         continue
-    spec = [(directions[k], count) for k, count in beta.items()]   # {d_k^{count}}
+    spec = [(directions[k][0], mu[k]) for k in range(len(mu)) if mu[k] > 0]   # the distinct dirs + powers
     fd = validation.forward_probe_by_finite_difference(problem.q, problem.theta0, spec)
-    rel = np.linalg.norm(forward[beta] - fd) / max(np.linalg.norm(fd), 1e-30)
-    print(f"  {str(beta):<13}{len(beta):<7}{rel:.2e}")
+    rel = np.linalg.norm(value - fd) / max(np.linalg.norm(fd), 1e-30)
+    print(f"  {str(mu):<9}{sum(mu):<7}{rel:.2e}")
 
-adj = validation.reverse_forward_adjointness(forward, reverse, alpha, directions, omega)
+adj = validation.reverse_forward_adjointness(forward, reverse, directions, omega)
 print(f"  reverse/forward adjointness (exact identity) max rel err: {adj:.2e}")

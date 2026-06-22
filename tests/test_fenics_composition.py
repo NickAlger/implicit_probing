@@ -5,6 +5,7 @@
 # Gated test: composing the FEniCS nonlinear-Poisson map with a linear INPUT map (theta from a few
 # low-order polynomial features) and a linear OUTPUT map (the observation restricted to the boundary
 # dofs). Runs only where dolfinx is importable.
+import itertools
 import unittest
 
 import numpy as np
@@ -18,11 +19,15 @@ from dolfinx import mesh, fem
 import dolfinx.fem.petsc as petsc_fem
 from petsc4py import PETSc
 
-from implicit_probing.multiset import Multiset, subset_lattice
 from implicit_probing.driver import probe
 from implicit_probing.composition import ComposedProblem
 from implicit_probing.fenics import FenicsImplicitProblem
 from implicit_probing import validation
+
+
+def power_tuples(directions):
+    """Every power-tuple (the sub-probe lattice) for a ``((vector, max_power), ...)`` directions list."""
+    return itertools.product(*[range(p + 1) for _, p in directions])
 
 
 class FeatureParameterization:
@@ -137,37 +142,39 @@ class TestComposedFenics(unittest.TestCase):
         cls.composed = ComposedProblem(cls.ctx["inner"], cls.ctx["C"], cls.ctx["W"])
         rng = np.random.default_rng(0)
         m = cls.ctx["m_features"]
-        cls.x_dirs = {1: rng.standard_normal(m), 2: rng.standard_normal(m)}
+        cls.x1 = rng.standard_normal(m)
+        cls.x2 = rng.standard_normal(m)
         cls.omega_z = rng.standard_normal(cls.ctx["m_obs"])   # functional on the reduced (boundary) output
 
     def test_forward_probes_match_finite_difference(self):
         # D^j f(x0)(xhat...) = W( D^j q(theta0)(C xhat...) ); the FD perturbs theta along C-mapped dirs.
         C, ctx = self.ctx["C"], self.ctx
-        for alpha in [Multiset([1]), Multiset([1, 1]), Multiset([1, 2])]:
-            forward, _ = probe(self.composed, alpha, self.x_dirs)
-            for beta in subset_lattice(alpha):
-                if len(beta) == 0:
+        for directions in [[(self.x1, 1)], [(self.x1, 2)], [(self.x1, 1), (self.x2, 1)]]:
+            forward, _ = probe(self.composed, directions)
+            for mu in power_tuples(directions):
+                if sum(mu) == 0:
                     continue
-                with self.subTest(alpha=alpha, beta=beta):
-                    spec = [(C.apply(self.x_dirs[k]), count) for k, count in beta.items()]
+                with self.subTest(directions=tuple(p for _, p in directions), mu=mu):
+                    spec = [(C.apply(directions[k][0]), mu[k]) for k in range(len(mu)) if mu[k] > 0]
                     obs_fd = validation.forward_probe_by_finite_difference(
                         ctx["observe"], ctx["theta0"], spec, perturb=_perturb, h=1e-3)
                     expected = obs_fd[ctx["top_dofs"]]            # W applied to the FD observation
-                    np.testing.assert_allclose(forward[beta], expected, atol=1e-5)
+                    np.testing.assert_allclose(forward[mu], expected, atol=1e-5)
 
     def test_reverse_probes_adjointness(self):
-        # On the composed map f: reverse[beta] . xhat_k == omega_z . forward[beta + {k}] (exact).
-        alpha = Multiset([1, 1, 2])
-        forward, reverse = probe(self.composed, alpha, self.x_dirs, self.omega_z)
+        # On the composed map f: reverse[mu] . xhat_k == omega_z . forward[mu + e_k] (exact).
+        directions = [(self.x1, 2), (self.x2, 1)]
+        forward, reverse = probe(self.composed, directions, self.omega_z)
         # composed forward/reverse are plain numpy (W-codomain and C-domain), so default numpy pairing works
-        err = validation.reverse_forward_adjointness(forward, reverse, alpha, self.x_dirs, self.omega_z)
+        err = validation.reverse_forward_adjointness(forward, reverse, directions, self.omega_z)
         self.assertLess(err, 1e-7, f"max adjointness rel err {err:.2e}")
 
     def test_output_shapes(self):
-        forward, reverse = probe(self.composed, Multiset([1, 2]), self.x_dirs, self.omega_z)
-        for beta in subset_lattice(Multiset([1, 2])):
-            self.assertEqual(forward[beta].shape, (self.ctx["m_obs"],))      # boundary observation
-            self.assertEqual(reverse[beta].shape, (self.ctx["m_features"],)) # feature-space covector
+        directions = [(self.x1, 1), (self.x2, 1)]
+        forward, reverse = probe(self.composed, directions, self.omega_z)
+        for mu in power_tuples(directions):
+            self.assertEqual(forward[mu].shape, (self.ctx["m_obs"],))      # boundary observation
+            self.assertEqual(reverse[mu].shape, (self.ctx["m_features"],)) # feature-space covector
 
 
 if __name__ == "__main__":

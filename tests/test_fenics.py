@@ -17,7 +17,6 @@ from dolfinx import mesh, fem
 import dolfinx.fem.petsc as petsc_fem
 from petsc4py import PETSc
 
-from implicit_probing.multiset import Multiset
 from implicit_probing.driver import probe
 from implicit_probing.fenics import FenicsImplicitProblem
 from implicit_probing import validation
@@ -106,14 +105,15 @@ class TestFenicsProbes(unittest.TestCase):
         prob, q_of = self.ctx["problem"], self.ctx["q_of"]
         theta0, d1, d2 = self.ctx["theta0"], self.d1, self.d2
         cases = [
-            ("order1",            Multiset([1]),       {1: d1},          [(d1, 1)],          1e-6),
-            ("order2 symmetric",  Multiset([1, 1]),    {1: d1},          [(d1, 2)],          1e-5),
-            ("order2 asymmetric", Multiset([1, 2]),    {1: d1, 2: d2},   [(d1, 1), (d2, 1)], 1e-5),
+            ("order1",            [(d1, 1)],            (1,),   1e-6),
+            ("order2 symmetric",  [(d1, 2)],            (2,),   1e-5),
+            ("order2 asymmetric", [(d1, 1), (d2, 1)],   (1, 1), 1e-5),
         ]
-        for name, alpha, dirs, spec, atol in cases:
+        for name, directions, mu, atol in cases:
             with self.subTest(symmetry=name):
-                forward, _ = probe(prob, alpha, dirs)
-                y = forward[alpha].array
+                forward, _ = probe(prob, directions)
+                y = forward[mu].array
+                spec = [(directions[k][0], mu[k]) for k in range(len(mu)) if mu[k] > 0]
                 y_fd = validation.forward_probe_by_finite_difference(
                     q_of, theta0, spec, perturb=_perturb, h=1e-3)
                 rel = np.linalg.norm(y - y_fd) / max(np.linalg.norm(y_fd), 1e-30)
@@ -121,16 +121,15 @@ class TestFenicsProbes(unittest.TestCase):
 
     def test_reverse_probes_match_omega_paired_forward(self):
         # Discrete adjointness (exact -- no finite differences): pairing a reverse probe with a
-        # direction equals omega paired with the forward probe one order higher,
-        #     reverse[beta] . theta_hat_j  ==  omega . forward[beta + {j}].
+        # direction equals omega paired with the forward probe one order higher in that axis,
+        #     reverse[mu] . d_k  ==  omega . forward[mu + e_k].
         # The forward probes are anchored to finite differences above, so this verifies the reverse
         # probes against them to solver precision, and needs no extra PDE solves (just dot products).
         prob, omega = self.ctx["problem"], self.ctx["omega"]
-        dirs = {1: self.d1, 2: self.d2}
-        alpha = Multiset([1, 1, 2])
-        forward, reverse = probe(prob, alpha, dirs, omega)
+        directions = [(self.d1, 2), (self.d2, 1)]
+        forward, reverse = probe(prob, directions, omega)
         err = validation.reverse_forward_adjointness(
-            forward, reverse, alpha, dirs, omega,
+            forward, reverse, directions, omega,
             pair_input=lambda rev, d: rev.array @ d.x.array,      # reverse covector (PETSc Vec) . dir (Function)
             pair_output=lambda om, fwd: om.x.array @ fwd.array)   # omega (Function) . forward output (PETSc Vec)
         self.assertLess(err, 1e-8, f"max adjointness rel err {err:.2e}")

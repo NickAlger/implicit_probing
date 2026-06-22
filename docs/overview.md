@@ -42,12 +42,12 @@ use (surrogate fitting, optimization, etc.).
 
 The probing machinery is a set of small, pure-functional modules at the top level of the package. The
 names you use are re-exported from `implicit_probing` directly, so the common path is one flat import:
-`from implicit_probing import probe, ImplicitProblem, Multiset`. Concrete problems live in their own
-modules, imported explicitly so their dependencies stay optional.
+`from implicit_probing import probe, ImplicitProblem`. Concrete problems live in their own modules,
+imported explicitly so their dependencies stay optional.
 
 | module | role |
 | --- | --- |
-| `multiset` | `Multiset` and `subset_lattice` — the index sets the probes are organized over. |
+| `multiset` | `Multiset` and `subset_lattice` — the index sets the symbolic engine is organized over (internal; the `probe` API speaks `(vector, power)` pairs and power-tuples, not `Multiset`). |
 | `symbolic` | **Algorithm 1**: a pure-symbolic engine that works out *which* partial derivatives of `R` and `Q` each probe is a sum of. No numbers. |
 | `driver` | **Algorithm 2**: `probe(...)`, which walks the lattice, asks your problem to do the solves and assemble the partial-derivative sums, and returns the probes. |
 | `composition` | `ComposedProblem` — probe `W ∘ q ∘ C` for linear input/output maps `C`, `W` (see `composition.md`). |
@@ -74,31 +74,33 @@ problem setup:
 
 ```python
 import numpy as np
-from implicit_probing import Multiset, probe
+from implicit_probing import probe
 from implicit_probing.reference_problems import make_toy_problem
 
 problem = make_toy_problem()        # q(theta) = Q(theta, u(theta)), R(theta, u) = 0; theta in R^2
 
-# Probe directions are given as a multiset of *labels*, plus the vector each label stands for.
-alpha = Multiset([1, 1, 2])         # probe the 3rd derivative in directions (d1, d1, d2)
-directions = {1: np.array([1.0, 0.3]), 2: np.array([0.4, -0.6])}
+# Directions are (vector, max_power) pairs: this asks for every probe up to a^2 b^1.
+a = np.array([1.0, 0.3])
+b = np.array([0.4, -0.6])
+directions = [(a, 2), (b, 1)]
 omega = np.array([1.0, 0.0])        # output functional (the QoI) the reverse probes differentiate
 
-forward, reverse = probe(problem, alpha, directions, omega)
+forward, reverse = probe(problem, directions, omega)
 
-forward[alpha]               # D^3 q(theta0) applied to (d1, d1, d2)   -> output vector in R^2
-reverse[alpha]               # omega(D^4 q(theta0)(d1, d1, d2, .))     -> covector in R^2 (parameter space)
-forward[Multiset([1])]       # the lower-order sub-probe D^1 q(theta0)(d1) comes for free
+forward[(2, 1)]              # D^3 q(theta0) applied to (a, a, b)       -> output vector in R^2
+reverse[(2, 1)]             # omega(D^4 q(theta0)(a, a, b, .))         -> covector in R^2 (parameter space)
+forward[(1, 0)]             # the lower-order sub-probe D^1 q(theta0)(a) comes for free
 ```
 
-A single `probe(alpha, ...)` call returns the forward and reverse probe for **every** sub-multiset of
-`alpha`, since the lower-order probes are computed along the way:
+A single `probe(directions, ...)` call returns the forward and reverse probe for **every** power-tuple
+`mu` in the box `∏_k {0, ..., max_power_k}`, since the lower-order probes are computed along the way.
+A probe is a mixed partial derivative of the map restricted to the directions, named by its
+differentiation multi-index — picture `theta = theta0 + s*a + t*b`:
 
-- `forward[beta]` is `D^|beta| q(theta0)` applied to `beta`'s directions (an output-space vector).
-  `forward[Multiset([])]` is just `q(theta0)`.
-- `reverse[beta]` is the covector `omega(D^{|beta|+1} q(theta0))` with one slot open;
-  `reverse[beta] @ d` equals `omega` applied to the order-`(|beta|+1)` forward probe in `beta`'s
-  directions plus the extra direction `d`. `reverse[Multiset([])]` is the gradient of `omega(q)`.
+- `forward[(i, j)]` is `∂_s^i ∂_t^j q(theta0 + s a + t b)|_0 = D^{i+j} q(theta0)[a^i b^j]` (an
+  output-space vector). `forward[(0, 0)]` is just `q(theta0)`.
+- `reverse[(i, j)]` is the covector with `reverse[(i, j)] @ d = omega(D^{i+j+1} q(theta0)[a^i b^j, d])`
+  for any extra direction `d`. `reverse[(0, 0)]` is the gradient of `omega(q)`.
 
 The probes are exact (up to the cost of the linear solves); the toy ships with a finite-difference
 ground truth (`forward_probe_by_finite_difference`) used to verify them.

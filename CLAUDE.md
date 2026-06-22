@@ -85,11 +85,16 @@ single-direction rule is t4s.pdf eqs (19)-(20); the lattice traversal is Algorit
 
 ### The driver and problem interface (Algorithm 2)
 
-`driver.py` is the numeric driver: `probe(problem, alpha, direction_vectors)` walks the
-lattice and returns `(forward, reverse)` probes for every `beta <= alpha` (forward -> output vector;
-reverse -> parameter covector). It is **vector-type agnostic** — it does no arithmetic on physics
-vectors, only lowering symbolic terms to `PartialTerm` requests, handing whole sums to the problem,
-and routing the opaque results. A problem implements the 3-method `ImplicitProblem` protocol:
+`driver.py` is the numeric driver: `probe(problem, directions, omega=None)` walks the lattice and
+returns `(forward, reverse)`. **User-facing API:** `directions` is a sequence of `(vector, max_power)`
+pairs (the distinct axes + how far to probe each); the returned dicts are keyed by **power-tuples** `mu`
+— `forward[mu]` is the mixed partial `d_s^{mu_0} d_t^{mu_1} ... q` (an output vector), `reverse[mu]` a
+parameter covector. `probe` resolves the pairs to internal position-labels, runs the label-`Multiset`
+engine unchanged, then translates the `Multiset` keys back to power-tuples on the way out — so `Multiset`
+never crosses the boundary (the math reason: a probe is a Taylor coefficient of `q` on the slice through
+the directions, intrinsically multi-indexed; the algorithm's multiset notation is the *internal* layer).
+It is **vector-type agnostic** — it does no arithmetic on physics vectors, only lowering symbolic terms
+to `PartialTerm` requests, handing whole sums to the problem, and routing the opaque results. A problem implements the 3-method `ImplicitProblem` protocol:
 `solve_operator` (`A x = b`), `solve_operator_adjoint` (`A* x = c`), and `assemble_partial_sum`
 (assemble a *whole sum* of partial-derivative terms — requesting sums, not singletons, lets a hook
 like FEniCS assemble one combined form). `reference_problems.py` (numpy) holds the toy

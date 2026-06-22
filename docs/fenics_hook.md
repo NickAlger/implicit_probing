@@ -29,7 +29,7 @@ from implicit_probing import probe
 from implicit_probing.fenics import FenicsImplicitProblem
 
 problem = FenicsImplicitProblem(R_form, Q_form, theta, u, bcs=[bc_homog])
-forward, reverse = probe(problem, alpha, direction_vectors, omega)
+forward, reverse = probe(problem, directions, omega)   # directions: ((d, max_power), ...) of Functions
 ```
 
 - `R_form`, `Q_form` — the residual and the observation, each a UFL 1-form linear in a test function
@@ -91,6 +91,6 @@ Two complementary checks (both shown in the example):
 - **Forward probes vs finite differences** — re-solve the PDE at `theta0 + sum_k s_k d_k` and take a
   tensor product of central differences. This is an independent ground truth.
 - **Reverse probes vs ω-paired forward probes** — the exact discrete adjointness identity
-  `psi_beta . d_k == omega . forward[beta + {k}]`, which needs no extra solves and holds to solver
+  `reverse[mu] . d_k == omega . forward[mu + e_k]`, which needs no extra solves and holds to solver
   precision. Since the forward probes are anchored to finite differences, this verifies the reverse
   probes too.

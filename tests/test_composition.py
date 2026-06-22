@@ -1,18 +1,19 @@
 # Authors: Nick Alger and Blake Christierson
 # Copyright: MIT License (2026)
 # Github: https://github.com/NickAlger/implicit_probing
+import itertools
 import unittest
 
 import numpy as np
 
-from implicit_probing.multiset import Multiset, subset_lattice
 from implicit_probing.driver import probe
 from implicit_probing.composition import ComposedProblem, MatrixOperator
 from implicit_probing.reference_problems import make_toy_problem, forward_probe_by_finite_difference
 
 
-def ms(*xs):
-    return Multiset(xs)
+def power_tuples(directions):
+    """Every power-tuple (the sub-probe lattice) for a ``((vector, max_power), ...)`` directions list."""
+    return itertools.product(*[range(p + 1) for _, p in directions])
 
 
 class TestComposedProblem(unittest.TestCase):
@@ -22,51 +23,62 @@ class TestComposedProblem(unittest.TestCase):
         self.C = rng.standard_normal((2, 3))             # input map: features R^3 -> theta R^2
         self.W = rng.standard_normal((1, 2))             # output map: obs R^2 -> reduced R^1
         self.composed = ComposedProblem(self.inner, MatrixOperator(self.C), MatrixOperator(self.W))
-        self.x_dirs = {1: rng.standard_normal(3), 2: rng.standard_normal(3), 3: rng.standard_normal(3)}
+        self.x1 = rng.standard_normal(3)
+        self.x2 = rng.standard_normal(3)
         self.omega_z = rng.standard_normal(1)            # output functional on the reduced output
 
     def test_forward_probes_match_W_times_fd(self):
         # D^j f(x0)(xhat...) = W( D^j q(theta0)(C xhat...) ); anchor to the inner's FD ground truth.
-        for alpha in [ms(1), ms(1, 1), ms(1, 2), ms(1, 1, 2)]:
-            with self.subTest(alpha=alpha):
-                forward, _ = probe(self.composed, alpha, self.x_dirs)
-                for beta in subset_lattice(alpha):
-                    if len(beta) == 0:
+        cases = [
+            [(self.x1, 1)],
+            [(self.x1, 2)],
+            [(self.x1, 1), (self.x2, 1)],
+            [(self.x1, 2), (self.x2, 1)],
+        ]
+        for directions in cases:
+            with self.subTest(directions=tuple(p for _, p in directions)):
+                forward, _ = probe(self.composed, directions)
+                for mu in power_tuples(directions):
+                    if sum(mu) == 0:
                         continue
-                    spec = [(self.C @ self.x_dirs[k], count) for k, count in beta.items()]
+                    # FD perturbs the INNER theta along the C-mapped feature directions
+                    spec = [(self.C @ directions[k][0], mu[k]) for k in range(len(mu)) if mu[k] > 0]
                     expected = self.W @ forward_probe_by_finite_difference(self.inner, spec, h=1e-2)
-                    np.testing.assert_allclose(forward[beta], expected, atol=1e-5)
+                    np.testing.assert_allclose(forward[mu], expected, atol=1e-5)
 
     def test_reverse_probes_adjointness_on_composed_map(self):
-        # On the composed map f: reverse[beta] . xhat_k == omega_z . forward[beta + {k}] (exact).
-        alpha = ms(1, 1, 2)
-        forward, reverse = probe(self.composed, alpha, self.x_dirs, self.omega_z)
-        for beta in subset_lattice(alpha):
-            for k, xvec in self.x_dirs.items():
-                child = beta.add(k)
-                if not child.issubmultiset(alpha):
+        # On the composed map f: reverse[mu] . xhat_k == omega_z . forward[mu + e_k] (exact).
+        directions = [(self.x1, 2), (self.x2, 1)]
+        forward, reverse = probe(self.composed, directions, self.omega_z)
+        for mu in power_tuples(directions):
+            for k, (xvec, p_k) in enumerate(directions):
+                if mu[k] >= p_k:
                     continue
-                lhs = float(reverse[beta] @ xvec)
+                child = mu[:k] + (mu[k] + 1,) + mu[k + 1:]
+                lhs = float(reverse[mu] @ xvec)
                 rhs = float(self.omega_z @ forward[child])
-                with self.subTest(beta=beta, k=k):
+                with self.subTest(mu=mu, k=k):
                     np.testing.assert_allclose(lhs, rhs, rtol=1e-8, atol=1e-12)
 
     def test_output_shapes(self):
-        forward, reverse = probe(self.composed, ms(1, 2), self.x_dirs, self.omega_z)
-        for beta in subset_lattice(ms(1, 2)):
-            self.assertEqual(forward[beta].shape, (1,))    # reduced output space (z)
-            self.assertEqual(reverse[beta].shape, (3,))    # input (feature) covector
+        directions = [(self.x1, 1), (self.x2, 1)]
+        forward, reverse = probe(self.composed, directions, self.omega_z)
+        for mu in power_tuples(directions):
+            self.assertEqual(forward[mu].shape, (1,))    # reduced output space (z)
+            self.assertEqual(reverse[mu].shape, (3,))    # input (feature) covector
 
     def test_identity_maps_recover_inner(self):
         # ComposedProblem with no maps must reproduce probing the inner directly.
         composed = ComposedProblem(self.inner)             # identity input/output maps
-        dirs = {1: np.array([1.0, 0.3]), 2: np.array([0.4, -0.6])}
+        a = np.array([1.0, 0.3])
+        b = np.array([0.4, -0.6])
         omega = np.array([0.7, -0.4])
-        f_c, r_c = probe(composed, ms(1, 2), dirs, omega)
-        f_i, r_i = probe(self.inner, ms(1, 2), dirs, omega)
-        for beta in subset_lattice(ms(1, 2)):
-            np.testing.assert_allclose(f_c[beta], f_i[beta])
-            np.testing.assert_allclose(r_c[beta], r_i[beta])
+        directions = [(a, 1), (b, 1)]
+        f_c, r_c = probe(composed, directions, omega)
+        f_i, r_i = probe(self.inner, directions, omega)
+        for mu in power_tuples(directions):
+            np.testing.assert_allclose(f_c[mu], f_i[mu])
+            np.testing.assert_allclose(r_c[mu], r_i[mu])
 
 
 if __name__ == '__main__':

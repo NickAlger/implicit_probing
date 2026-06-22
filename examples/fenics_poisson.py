@@ -34,7 +34,7 @@ from petsc4py import PETSc
 from dolfinx import mesh, fem
 import dolfinx.fem.petsc as petsc_fem
 
-from implicit_probing import Multiset, subset_lattice, probe
+from implicit_probing import probe
 from implicit_probing import validation                    # finite-difference cross-check (testing only)
 from implicit_probing.fenics import FenicsImplicitProblem
 
@@ -122,37 +122,36 @@ problem = FenicsImplicitProblem(
     theta0, u0, bcs=[bc_homog])
 
 # smooth probing directions (NOT random dof vectors -- keeps the finite-difference check below clean)
-directions = {
-    1: lambda xx: np.sin(np.pi * xx[0]) * np.sin(np.pi * xx[1]),
-    2: lambda xx: np.cos(np.pi * xx[0]) * np.sin(2 * np.pi * xx[1]),
-    3: lambda xx: np.sin(2 * np.pi * xx[0]) * np.cos(np.pi * xx[1]),
-}
-dir_funcs = {}
-for k, fn in directions.items():
-    d = fem.Function(V_theta); d.interpolate(fn); dir_funcs[k] = d
+def field(fn):
+    d = fem.Function(V_theta); d.interpolate(fn); return d
 
-alpha = Multiset([1, 1, 2])     # exercises orders 1-3: symmetric {1,1}, asymmetric {1,2}, mixed {1,1,2}
-forward, reverse = probe(problem, alpha, dir_funcs, omega)
-print(f"one probe(alpha={{1,1,2}}) call returned forward + reverse for all "
-      f"{len(subset_lattice(alpha))} sub-probes (every lower order came for free)")
+d1 = field(lambda xx: np.sin(np.pi * xx[0]) * np.sin(np.pi * xx[1]))
+d2 = field(lambda xx: np.cos(np.pi * xx[0]) * np.sin(2 * np.pi * xx[1]))
+d3 = field(lambda xx: np.sin(2 * np.pi * xx[0]) * np.cos(np.pi * xx[1]))
+
+# directions are (field, max_power) pairs; this asks for every probe up to d1^2 d2^1 (orders 1-3).
+directions = [(d1, 2), (d2, 1)]
+forward, reverse = probe(problem, directions, omega)
+print(f"one probe call returned forward + reverse for all {len(forward)} sub-probes "
+      "(every lower order came for free)")
 
 
 # ====================================================================================================
 # RESULTS  --  the actually-useful outputs
 # ====================================================================================================
-print("\nforward probes  D^|beta| q(theta0)  (norm of the observation-space vector):")
-for beta in subset_lattice(alpha):
-    if len(beta) == 0:
+print("\nforward probes, keyed by power-tuple (i, j) = order along (d1, d2)  (norm of the obs vector):")
+for mu in sorted(forward):
+    if sum(mu) == 0:
         continue
-    print(f"  order {len(beta)}  {str(beta):<12} ||D^|b| q|| = {np.linalg.norm(forward[beta].array):.4e}")
+    print(f"  {str(mu):<8} ||D^{sum(mu)} q|| = {np.linalg.norm(forward[mu].array):.4e}")
 
-# reverse[empty] is the gradient of the QoI omega(q) w.r.t. the whole theta field -- one adjoint solve.
-print(f"\nQoI gradient field (reverse[empty]) over the parameter space: norm "
-      f"{np.linalg.norm(reverse[Multiset([])].array):.4e}")
+# reverse[(0,0)] is the gradient of the QoI omega(q) w.r.t. the whole theta field -- one adjoint solve.
+print(f"\nQoI gradient field (reverse[(0,0)]) over the parameter space: norm "
+      f"{np.linalg.norm(reverse[(0, 0)].array):.4e}")
 
-# a fully-asymmetric order-3 probe runs just the same (distinct directions => a bigger lattice):
-fwd3, _ = probe(problem, Multiset([1, 2, 3]), dir_funcs)
-print(f"fully-asymmetric D^3 q (d1,d2,d3): ||probe|| = {np.linalg.norm(fwd3[Multiset([1, 2, 3])].array):.4e}")
+# a fully-asymmetric order-3 probe runs just the same (distinct directions => a bigger box):
+fwd3, _ = probe(problem, [(d1, 1), (d2, 1), (d3, 1)])
+print(f"fully-asymmetric D^3 q (d1,d2,d3): ||probe|| = {np.linalg.norm(fwd3[(1, 1, 1)].array):.4e}")
 
 
 # ====================================================================================================
@@ -166,17 +165,17 @@ def perturb(point, scale, direction):                    # the one FEniCS-specif
     return moved
 
 print("\n(cross-check vs finite differences -- confidence only, not how you'd compute these:)")
-print(f"  {'beta':<12}{'order':<7}{'rel err vs FD'}")
-for beta in subset_lattice(alpha):
-    if len(beta) == 0:
+print(f"  {'(i,j)':<8}{'order':<7}{'rel err vs FD'}")
+for mu in sorted(forward):
+    if sum(mu) == 0:
         continue
-    spec = [(dir_funcs[k], count) for k, count in beta.items()]
+    spec = [(directions[k][0], mu[k]) for k in range(len(mu)) if mu[k] > 0]
     fd = validation.forward_probe_by_finite_difference(observe, theta0, spec, perturb=perturb, h=2e-3)
-    rel = np.linalg.norm(forward[beta].array - fd) / max(np.linalg.norm(fd), 1e-30)
-    print(f"  {str(beta):<12}{len(beta):<7}{rel:.2e}")
+    rel = np.linalg.norm(forward[mu].array - fd) / max(np.linalg.norm(fd), 1e-30)
+    print(f"  {str(mu):<8}{sum(mu):<7}{rel:.2e}")
 
 adj = validation.reverse_forward_adjointness(
-    forward, reverse, alpha, dir_funcs, omega,
+    forward, reverse, directions, omega,
     pair_input=lambda rev, d: rev.array @ d.x.array,      # reverse covector (PETSc Vec) . direction (Function)
     pair_output=lambda om, fwd: om.x.array @ fwd.array)   # omega (Function) . forward output (PETSc Vec)
 print(f"  reverse/forward adjointness (exact identity) max rel err: {adj:.2e}")
@@ -190,8 +189,8 @@ try:
     import pyvista
     from dolfinx import plot
     out_dir = Path("out_fenics_poisson"); out_dir.mkdir(exist_ok=True)
-    grad = fem.Function(V_theta)                 # reverse[empty] = gradient of omega(q) w.r.t. theta
-    grad.x.array[:] = reverse[Multiset([])].array
+    grad = fem.Function(V_theta)                 # reverse[(0,0)] = gradient of omega(q) w.r.t. theta
+    grad.x.array[:] = reverse[(0, 0)].array
     for field, space, name in [(u0, V_u, "state_u0"), (grad, V_theta, "qoi_gradient")]:
         cells, types, pts = plot.vtk_mesh(space)
         grid = pyvista.UnstructuredGrid(cells, types, pts)

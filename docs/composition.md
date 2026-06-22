@@ -31,15 +31,15 @@ reverse probe by `C^T`, and pull the output functional back by `W^T`.
 from implicit_probing import ComposedProblem, probe
 
 composed = ComposedProblem(inner_problem, input_map=C, output_map=W)   # f = W o q o C
-forward, reverse = probe(composed, alpha, x_directions, omega)
+forward, reverse = probe(composed, x_directions, omega)
 ```
 
 - `inner_problem` — any `ImplicitProblem` (the toy, the FEniCS hook, ...).
-- `x_directions` — a `{label: vector}` map in the **input** (`C`-domain) space.
+- `x_directions` — `(vector, max_power)` pairs in the **input** (`C`-domain) space.
 - `omega` — the output functional, a covector in the **reduced output** (`W`-codomain) space.
-- `forward[beta]` comes back in the reduced output space; `reverse[beta]` is a covector in the input
-  space. Either map may be `None` (identity). `ComposedProblem` is itself an `ImplicitProblem`, so
-  compositions nest.
+- `forward[mu]` (keyed by power-tuple) comes back in the reduced output space; `reverse[mu]` is a
+  covector in the input space. Either map may be `None` (identity). `ComposedProblem` is itself an
+  `ImplicitProblem`, so compositions nest.
 
 ## The linear operators
 

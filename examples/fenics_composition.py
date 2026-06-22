@@ -31,7 +31,7 @@ from petsc4py import PETSc
 from dolfinx import mesh, fem
 import dolfinx.fem.petsc as petsc_fem
 
-from implicit_probing import Multiset, subset_lattice, probe, ComposedProblem
+from implicit_probing import probe, ComposedProblem
 from implicit_probing import validation                    # finite-difference cross-check (testing only)
 from implicit_probing.fenics import FenicsImplicitProblem
 
@@ -147,14 +147,16 @@ print("Composed map  f = W o q o C  :  x (features) -> z (boundary observations)
 print(f"  input  : {n_features} polynomial features        (vs {theta0.x.array.size} theta dofs in the full field)")
 print(f"  output : {n_obs} boundary observation dofs   (vs {u0.function_space.dofmap.index_map.size_global}+ in the full domain)")
 
-# Probe directions live in feature space (R^m); omega is on the reduced output. Here omega = ones, so
-# omega(z) = sum of the boundary observations = the total top-trace integral of u (a partition of unity).
+# Probe directions live in feature space (R^m), given as (vector, max_power) pairs; omega is on the
+# reduced output. Here omega = ones, so omega(z) = sum of the boundary observations = the total
+# top-trace integral of u (a partition of unity).
 rng = np.random.default_rng(0)
-x_directions = {1: rng.standard_normal(n_features), 2: rng.standard_normal(n_features)}
+x1 = rng.standard_normal(n_features)
+x2 = rng.standard_normal(n_features)
+x_directions = [(x1, 2), (x2, 1)]
 omega = np.ones(n_obs)
 
-alpha = Multiset([1, 1, 2])
-forward, reverse = probe(composed, alpha, x_directions, omega)
+forward, reverse = probe(composed, x_directions, omega)
 # The PDE state solves are untouched by C, W -- they only reparameterize the input and re-observe the
 # output -- so probing the reduced map costs exactly what probing the raw map does.
 
@@ -162,10 +164,10 @@ forward, reverse = probe(composed, alpha, x_directions, omega)
 # ====================================================================================================
 # RESULTS  --  the per-feature QoI gradient (directly interpretable)
 # ====================================================================================================
-# reverse[empty] is one number per feature: how each polynomial mode of the log-diffusivity affects the
+# reverse[(0,0)] is one number per feature: how each polynomial mode of the log-diffusivity affects the
 # total top-trace. A single adjoint solve gives the whole feature-space gradient.
 print("\nGradient of the QoI (total top-trace) w.r.t. each feature:")
-for name, value in zip(features, reverse[Multiset([])]):
+for name, value in zip(features, reverse[(0, 0)]):
     print(f"  d/d[{name:<3}] = {value:+.4e}")
 
 
@@ -179,16 +181,16 @@ def perturb(point, scale, direction):                # FEniCS hook: theta pertur
     return moved
 
 print("\n(cross-check vs finite differences of the re-solved composed map -- confidence only:)")
-print(f"  {'beta':<12}{'order':<7}{'rel err vs FD'}")
-for beta in subset_lattice(alpha):
-    if len(beta) == 0:
+print(f"  {'(i,j)':<8}{'order':<7}{'rel err vs FD'}")
+for mu in sorted(forward):
+    if sum(mu) == 0:
         continue
-    spec = [(C.apply(x_directions[k]), count) for k, count in beta.items()]   # directions pre-mapped by C
+    spec = [(C.apply(x_directions[k][0]), mu[k]) for k in range(len(mu)) if mu[k] > 0]  # dirs pre-mapped by C
     fd_full = validation.forward_probe_by_finite_difference(observe, theta0, spec, perturb=perturb, h=2e-3)
     fd = fd_full[top_dofs]                            # W: restrict to the boundary dofs
-    rel = np.linalg.norm(forward[beta] - fd) / max(np.linalg.norm(fd), 1e-30)
-    print(f"  {str(beta):<12}{len(beta):<7}{rel:.2e}")
+    rel = np.linalg.norm(forward[mu] - fd) / max(np.linalg.norm(fd), 1e-30)
+    print(f"  {str(mu):<8}{sum(mu):<7}{rel:.2e}")
 
 # composed forward/reverse are plain numpy (W-codomain and C-domain), so the default numpy pairing works
-adj = validation.reverse_forward_adjointness(forward, reverse, alpha, x_directions, omega)
+adj = validation.reverse_forward_adjointness(forward, reverse, x_directions, omega)
 print(f"  reverse/forward adjointness (exact identity) max rel err: {adj:.2e}")

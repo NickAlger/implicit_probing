@@ -1,11 +1,12 @@
 # Authors: Nick Alger and Blake Christierson
 # Copyright: MIT License (2026)
 # Github: https://github.com/NickAlger/implicit_probing
+import itertools
 import unittest
 
 import numpy as np
 
-from implicit_probing.multiset import Multiset, subset_lattice
+from implicit_probing.multiset import Multiset
 from implicit_probing.symbolic import (
     Term, ID, OMEGA, adjoint,
     seed_residual_r, seed_reverse, differentiate_over_lattice,
@@ -19,9 +20,14 @@ def ms(*xs):
     return Multiset(xs)
 
 
-def spec_of(beta, direction_vectors):
-    """The (vector, order) list a finite-difference probe wants, from a label-multiset beta."""
-    return [(direction_vectors[label], count) for label, count in beta.items()]
+def power_tuples(directions):
+    """Every power-tuple (the sub-probe lattice) for a ``((vector, max_power), ...)`` directions list."""
+    return itertools.product(*[range(p + 1) for _, p in directions])
+
+
+def fd_spec(directions, mu):
+    """The (vector, order) list a finite-difference probe wants, for the power-tuple ``mu``."""
+    return [(directions[k][0], mu[k]) for k in range(len(mu)) if mu[k] > 0]
 
 
 class TestExtraction(unittest.TestCase):
@@ -60,21 +66,23 @@ class TestExtraction(unittest.TestCase):
 class TestProbeStructure(unittest.TestCase):
     def setUp(self):
         self.prob = make_toy_problem(seed=0)
-        self.dirs = {1: np.array([1.0, 0.3]), 2: np.array([0.4, -0.6])}
+        self.a = np.array([1.0, 0.3])
+        self.b = np.array([0.4, -0.6])
         self.omega = np.array([0.7, -0.4])
 
-    def test_returns_probe_for_every_subset_with_right_shapes(self):
-        alpha = ms(1, 1, 2)
-        forward, reverse = probe(self.prob, alpha, self.dirs, self.omega)
-        self.assertEqual(set(forward), set(subset_lattice(alpha)))
-        self.assertEqual(set(reverse), set(subset_lattice(alpha)))
-        for beta in subset_lattice(alpha):
-            self.assertEqual(forward[beta].shape, (self.prob.n_q,))   # output-space vector
-            self.assertEqual(reverse[beta].shape, (self.prob.p,))     # parameter-space covector
+    def test_returns_probe_for_every_power_tuple_with_right_shapes(self):
+        directions = [(self.a, 2), (self.b, 1)]
+        forward, reverse = probe(self.prob, directions, self.omega)
+        keys = set(power_tuples(directions))
+        self.assertEqual(set(forward), keys)
+        self.assertEqual(set(reverse), keys)
+        for mu in keys:
+            self.assertEqual(forward[mu].shape, (self.prob.n_q,))   # output-space vector
+            self.assertEqual(reverse[mu].shape, (self.prob.p,))     # parameter-space covector
 
-    def test_forward_empty_is_q_at_expansion_point(self):
-        forward, _ = probe(self.prob, ms(1), self.dirs)
-        np.testing.assert_allclose(forward[ms()], self.prob.q(self.prob.theta0), atol=1e-12)
+    def test_forward_origin_is_q_at_expansion_point(self):
+        forward, _ = probe(self.prob, [(self.a, 1)])
+        np.testing.assert_allclose(forward[(0,)], self.prob.q(self.prob.theta0), atol=1e-12)
 
 
 class TestProbeAgainstFiniteDifference(unittest.TestCase):
@@ -82,51 +90,49 @@ class TestProbeAgainstFiniteDifference(unittest.TestCase):
 
     def setUp(self):
         self.prob = make_toy_problem(seed=0)
-        self.dirs = {
-            1: np.array([1.0, 0.3]),
-            2: np.array([0.4, -0.6]),
-            3: np.array([-0.2, 0.9]),
-        }
+        self.a = np.array([1.0, 0.3])
+        self.b = np.array([0.4, -0.6])
+        self.c = np.array([-0.2, 0.9])
         self.omega = np.array([0.7, -0.4])
 
     def test_forward_probes_all_symmetries(self):
         cases = {
-            'order1':            ms(1),
-            'order2 symmetric':  ms(1, 1),
-            'order2 asymmetric': ms(1, 2),
-            'order3 symmetric':  ms(1, 1, 1),
-            'order3 partial':    ms(1, 1, 2),
-            'order3 asymmetric': ms(1, 2, 3),
+            'order1':            [(self.a, 1)],
+            'order2 symmetric':  [(self.a, 2)],
+            'order2 asymmetric': [(self.a, 1), (self.b, 1)],
+            'order3 symmetric':  [(self.a, 3)],
+            'order3 partial':    [(self.a, 2), (self.b, 1)],
+            'order3 asymmetric': [(self.a, 1), (self.b, 1), (self.c, 1)],
         }
-        for name, alpha in cases.items():
+        for name, directions in cases.items():
             with self.subTest(symmetry=name):
-                forward, _ = probe(self.prob, alpha, self.dirs)
-                for beta in subset_lattice(alpha):
-                    if len(beta) == 0:
-                        expected = self.prob.q(self.prob.theta0)  # forward[empty] = q(theta0), exact
+                forward, _ = probe(self.prob, directions)
+                for mu in power_tuples(directions):
+                    if sum(mu) == 0:
+                        expected = self.prob.q(self.prob.theta0)  # forward[(0,...,0)] = q(theta0), exact
                     else:
-                        expected = forward_probe_by_finite_difference(self.prob, spec_of(beta, self.dirs), h=1e-2)
-                    np.testing.assert_allclose(forward[beta], expected, atol=1e-5)
+                        expected = forward_probe_by_finite_difference(self.prob, fd_spec(directions, mu), h=1e-2)
+                    np.testing.assert_allclose(forward[mu], expected, atol=1e-5)
 
     def test_reverse_probes_match_omega_of_forward(self):
-        # psi_beta is the covector with  psi_beta . d_open = omega( D^{|beta|+1} q (beta-dirs, d_open) ).
+        # reverse[mu] is the covector with  reverse[mu] . d_open = omega( D^{|mu|+1} q (mu-dirs, d_open) ).
         d_open = np.array([0.5, -0.8])
-        for alpha in [ms(1), ms(1, 1), ms(1, 2)]:
-            with self.subTest(alpha=alpha):
-                _, reverse = probe(self.prob, alpha, self.dirs, self.omega)
-                for beta in subset_lattice(alpha):
-                    augmented = spec_of(beta, self.dirs) + [(d_open, 1)]
+        for directions in [[(self.a, 1)], [(self.a, 2)], [(self.a, 1), (self.b, 1)]]:
+            with self.subTest(directions=tuple(p for _, p in directions)):
+                _, reverse = probe(self.prob, directions, self.omega)
+                for mu in power_tuples(directions):
+                    augmented = fd_spec(directions, mu) + [(d_open, 1)]
                     rhs = self.omega @ forward_probe_by_finite_difference(self.prob, augmented, h=1e-2)
-                    lhs = reverse[beta] @ d_open
+                    lhs = reverse[mu] @ d_open
                     np.testing.assert_allclose(lhs, rhs, atol=1e-5)
 
     def test_order_four_edge_case(self):
         # Degree-3 toy => 4th-order partials vanish, but the order-4 incremental solves still run.
         # The driver must assemble D^4 q correctly (looser tol: 4th-order finite differences are noisier).
-        alpha = ms(1, 1, 1, 1)
-        forward, _ = probe(self.prob, alpha, self.dirs)
-        expected = forward_probe_by_finite_difference(self.prob, spec_of(alpha, self.dirs), h=3e-2)
-        np.testing.assert_allclose(forward[alpha], expected, atol=1e-3)
+        directions = [(self.a, 4)]
+        forward, _ = probe(self.prob, directions)
+        expected = forward_probe_by_finite_difference(self.prob, fd_spec(directions, (4,)), h=3e-2)
+        np.testing.assert_allclose(forward[(4,)], expected, atol=1e-3)
 
 
 class _RecordingProblem:
@@ -150,9 +156,10 @@ class TestPartialTermRepresentation(unittest.TestCase):
     """theta_dirs / u_vecs are (vector, multiplicity) pairs -- a multiset, not a flat sequence."""
 
     def setUp(self):
-        self.dirs = {1: np.array([1.0, 0.3]), 2: np.array([0.4, -0.6])}
+        a = np.array([1.0, 0.3])
+        b = np.array([0.4, -0.6])
         self.rec = _RecordingProblem(make_toy_problem(seed=0))
-        probe(self.rec, ms(1, 1, 2), self.dirs, omega=np.array([0.7, -0.4]))  # repeats direction 1
+        probe(self.rec, [(a, 2), (b, 1)], omega=np.array([0.7, -0.4]))  # power 2 on direction a
         self.assertTrue(self.rec.terms)                          # something was actually assembled
 
     def test_directions_are_vector_multiplicity_pairs(self):

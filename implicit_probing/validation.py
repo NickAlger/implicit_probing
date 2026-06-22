@@ -24,8 +24,6 @@ plain numpy ``+`` / ``@`` so the numpy toy needs no hooks while a FEniCS/PETSc p
 import itertools
 import typing as typ
 
-from implicit_probing.multiset import Multiset, subset_lattice
-
 __all__ = [
     'forward_probe_by_finite_difference',
     'reverse_forward_adjointness',
@@ -101,38 +99,37 @@ def forward_probe_by_finite_difference(
 
 
 def reverse_forward_adjointness(
-        forward:    typ.Mapping,            # beta -> forward probe (output vector), as returned by probe()
-        reverse:    typ.Mapping,            # beta -> reverse probe (parameter covector), as returned by probe()
-        alpha:      Multiset,               # the probed multiset of direction labels
-        directions: typ.Mapping,            # label -> direction vector (the same map passed to probe)
+        forward:    typ.Mapping,            # power-tuple mu -> forward probe (output vector), from probe()
+        reverse:    typ.Mapping,            # power-tuple mu -> reverse probe (parameter covector), from probe()
+        directions: typ.Sequence,           # ((vector, max_power), ...) -- the same sequence passed to probe()
         omega:      typ.Any,                # the output functional the reverse probes were taken with
         *,
-        pair_input:  typ.Callable = _default_pair,   # (reverse covector, direction) -> scalar
-        pair_output: typ.Callable = _default_pair,   # (omega, forward output)       -> scalar
+        pair_input:  typ.Callable = _default_pair,   # (reverse covector, direction vector) -> scalar
+        pair_output: typ.Callable = _default_pair,   # (omega, forward output)              -> scalar
 ) -> float:
     """Max relative error of the exact reverse/forward adjoint identity, swept over the lattice.
 
-    For every ``beta <= alpha`` and direction label ``k`` with ``beta + {k} <= alpha``, a correct pair
-    of probes satisfies, with no approximation,
+    For every power-tuple ``mu`` and axis ``k`` with ``mu + e_k`` still in the probed box, a correct
+    pair of probes satisfies, with no approximation,
 
-        reverse[beta] . directions[k]  ==  omega . forward[beta + {k}],
+        reverse[mu] . directions[k][0]  ==  omega . forward[mu + e_k],
 
-    i.e. pairing the reverse probe's open slot with a direction reproduces ``omega`` applied to the
-    forward probe one order higher. No finite differences are involved -- this cross-checks the reverse
-    probes (which used the adjoint solves) against the forward probes (themselves anchored by
-    ``forward_probe_by_finite_difference``) to solver precision. Returns the largest relative
-    discrepancy over the sweep (``0.0`` if there are no eligible ``(beta, k)`` pairs).
+    i.e. pairing the reverse probe's open slot with axis ``k``'s direction reproduces ``omega`` applied
+    to the forward probe one order higher in that axis. No finite differences are involved -- this
+    cross-checks the reverse probes (which used the adjoint solves) against the forward probes
+    (themselves anchored by ``forward_probe_by_finite_difference``) to solver precision. Returns the
+    largest relative discrepancy over the sweep (``0.0`` if there are no eligible ``(mu, k)`` pairs).
 
     ``pair_input`` / ``pair_output`` are the two inner products (parameter space and output space),
     defaulting to numpy ``@``; a FEniCS problem passes closures that extract the underlying arrays.
     """
     worst = 0.0
-    for beta in subset_lattice(alpha):
-        for k, direction in directions.items():
-            child = beta.add(k)
-            if not child.issubmultiset(alpha):
+    for mu in itertools.product(*[range(max_power + 1) for _, max_power in directions]):
+        for k, (vector, max_power) in enumerate(directions):
+            if mu[k] >= max_power:           # mu + e_k leaves the box -> that forward probe wasn't computed
                 continue
-            lhs = float(pair_input(reverse[beta], direction))
+            child = mu[:k] + (mu[k] + 1,) + mu[k + 1:]
+            lhs = float(pair_input(reverse[mu], vector))
             rhs = float(pair_output(omega, forward[child]))
             worst = max(worst, abs(lhs - rhs) / max(abs(lhs), abs(rhs), 1e-30))
     return worst

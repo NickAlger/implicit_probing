@@ -137,25 +137,50 @@ def _lower(
 
 
 def probe(
-        problem:           ImplicitProblem,
-        alpha:             Multiset,            # multiset of probing-direction LABELS
-        direction_vectors: typ.Mapping,         # label -> the actual theta-direction vector (opaque)
-        omega:             typ.Any = None,      # output functional; None -> forward probes only
-) -> typ.Tuple[typ.Dict[Multiset, typ.Any], typ.Dict[Multiset, typ.Any]]:
-    """Algorithm 2: forward (and, if ``omega`` is given, reverse) probes over the sub-multisets of ``alpha``.
+        problem:    ImplicitProblem,
+        directions: typ.Sequence,            # ((vector, max_power), ...) -- the axes and how far to probe each
+        omega:      typ.Any = None,          # output functional; None -> forward probes only
+) -> typ.Tuple[typ.Dict[typ.Tuple[int, ...], typ.Any], typ.Dict[typ.Tuple[int, ...], typ.Any]]:
+    """Algorithm 2: forward (and, if ``omega`` is given, reverse) probes of ``D^j q(theta0)``.
 
-    Returns ``(forward, reverse)``, each a dict over every ``beta <= alpha``:
+    ``directions`` is a sequence of ``(vector, max_power)`` pairs naming the distinct directions to
+    probe and the highest power of each -- e.g. ``((a, 2), (b, 1))`` asks for every probe up to
+    ``a^2 b^1``. The pairs fix an ordered coordinate system: picture the parameter moving along the
+    directions, ``theta = theta0 + s*a + t*b``. A forward probe is then a *mixed partial derivative* of
+    the restricted map, named by its multi-index of differentiation:
 
-    - ``forward[beta]`` = ``D^|beta| q(theta0)`` applied to ``beta``'s directions -- an output-space
-      vector. ``forward[empty]`` is ``q(theta0)`` itself.
-    - ``reverse[beta]`` = ``omega(D^{|beta|+1} q(theta0))`` applied to ``beta``'s directions with one
-      slot left open -- a parameter-space covector (so it gives the sensitivity to *every* open
-      direction from a single adjoint solve). ``reverse[empty]`` is the gradient of ``omega(q)``.
+        forward[(i, j)] = d_s^i d_t^j q(theta0 + s a + t b)|_0 = D^{i+j} q(theta0) [a^i b^j].
 
-    ``omega`` is the output functional: a single covector in the output space, a per-probe choice of
-    quantity of interest, NOT a property of the problem. If ``omega is None``, only forward probes are
-    computed (the adjoint solves and the reverse pass are skipped) and ``reverse`` is empty.
+    Returns ``(forward, reverse)``, each a dict over every power-tuple ``mu`` in the box
+    ``prod_k {0, ..., max_power_k}`` -- one call yields every sub-probe, the lower orders falling out of
+    the same shared-operator solves for free:
+
+    - ``forward[mu]`` is an output-space vector; ``forward[(0, ..., 0)]`` is ``q(theta0)`` itself.
+    - ``reverse[mu]`` is a parameter-space covector with ``reverse[mu] . d = omega(D^{|mu|+1} q(theta0)
+      [a^{mu_0} b^{mu_1} ..., d])`` for any extra direction ``d`` -- the QoI sensitivity to *every* open
+      direction from a single adjoint solve. ``reverse[(0, ..., 0)]`` is the gradient of ``omega(q)``.
+
+    ``omega`` is the output functional (a covector in the output space), a per-probe choice of quantity
+    of interest. If ``omega is None``, only forward probes are computed (adjoint solves and the reverse
+    pass skipped) and ``reverse`` is empty.
     """
+    # Resolve the (vector, max_power) pairs to the internal label-multiset machinery: the position k of
+    # each pair is its label, so the returned power-tuples come out in the order the directions are given.
+    direction_vectors: typ.Dict[int, typ.Any] = {}
+    counts: typ.Dict[int, int] = {}
+    seen_ids = set()
+    for k, (vector, max_power) in enumerate(directions):
+        if not isinstance(max_power, int) or max_power < 1:
+            raise ValueError(f'direction {k}: max_power must be a positive integer, got {max_power!r}')
+        if id(vector) in seen_ids:
+            raise ValueError(f'direction {k}: the same vector object is given at two positions; each '
+                             'direction must be a distinct axis')
+        seen_ids.add(id(vector))
+        direction_vectors[k] = vector
+        counts[k] = max_power
+    n_dirs = len(direction_vectors)
+    alpha = Multiset.from_counts(counts)
+
     reverse_wanted = omega is not None
     # Symbolic expansions for every node (Algorithm 1), once. The reverse seed serves both the adjoint
     # residual R^adj (-> the c_beta right-hand sides) and the gradient g (-> the reverse probes).
@@ -177,13 +202,17 @@ def probe(
                              direction_vectors, u_hat, v_hat, open_slot='u', sign=-1)
             v_hat[beta] = problem.solve_operator_adjoint(problem.assemble_partial_sum(c_terms, omega))
 
-    # Assemble every forward probe (and reverse probe, if omega was given).
-    forward: typ.Dict[Multiset, typ.Any] = {}
-    reverse: typ.Dict[Multiset, typ.Any] = {}
+    # Assemble every forward probe (and reverse probe, if omega was given), keying by the power-tuple
+    # mu_k = (multiplicity of label k in beta) = the power of direction k -- in the caller's order.
+    def powers(beta: Multiset) -> typ.Tuple[int, ...]:
+        return tuple(beta.count(k) for k in range(n_dirs))
+
+    forward: typ.Dict[typ.Tuple[int, ...], typ.Any] = {}
+    reverse: typ.Dict[typ.Tuple[int, ...], typ.Any] = {}
     for beta in subset_lattice(alpha):
-        forward[beta] = problem.assemble_partial_sum(
+        forward[powers(beta)] = problem.assemble_partial_sum(
             _lower(expansions_q[beta], direction_vectors, u_hat, None, open_slot=None, sign=1), omega)
         if reverse_wanted:
-            reverse[beta] = problem.assemble_partial_sum(
+            reverse[powers(beta)] = problem.assemble_partial_sum(
                 _lower(expansions_reverse[beta], direction_vectors, u_hat, v_hat, open_slot='theta', sign=1), omega)
     return forward, reverse

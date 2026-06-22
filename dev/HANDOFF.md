@@ -50,8 +50,8 @@ Python, no numpy.
   - `ImplicitProblem` — the 3-method `Protocol`: `solve_operator`, `solve_operator_adjoint`,
     `assemble_partial_sum`. The driver does NO arithmetic on physics vectors; it only resolves
     symbolic labels to vectors, hands whole sums to the problem, and routes the opaque results.
-  - `probe(problem, alpha, direction_vectors)` -> `(forward, reverse)` dicts over every `beta <=
-    alpha`. Forward = output-space vector; reverse = parameter-space covector (gradient-like).
+  - `probe(problem, directions, omega=None)` -> `(forward, reverse)` dicts keyed by power-tuples `mu`,
+    one per sub-probe. Forward = output-space vector; reverse = parameter-space covector (gradient-like).
 - `implicit_probing/reference_problems.py` (extended) — `Polynomial.derivative_open_slot` (one open
   derivative slot) and the `ImplicitProblem` hook on the toy (`solve_operator` /
   `solve_operator_adjoint` / `assemble_partial_sum`), a reference implementation of the interface.
@@ -90,7 +90,7 @@ observation test function CG1) to catch space-conflation bugs.
 
 **`omega` is a per-probe argument (not a problem attribute), and linear composition.**
 
-- `probe(problem, alpha, direction_vectors, omega=None)`; `omega` is threaded to
+- `probe(problem, directions, omega=None)`; `omega` is threaded to
   `assemble_partial_sum(self, terms, omega)`; problems no longer store it. `omega=None` computes
   forward probes only (skips the adjoint solves + reverse pass). The `OMEGA` sentinel stays in
   `PartialTerm.pairing` so a problem can tell an output-functional pairing from an incremental adjoint
@@ -111,9 +111,9 @@ observation test function CG1) to catch space-conflation bugs.
 - `implicit_probing/validation.py` -- vector-agnostic, testing-only (a probe is exact and far cheaper,
   so the real workflow never finite-differences). `forward_probe_by_finite_difference(q, theta0,
   direction_orders, *, perturb=..., h, richardson)` (tensor-product central differences,
-  Richardson-extrapolated) and `reverse_forward_adjointness(forward, reverse, alpha, directions, omega,
-  *, pair_input, pair_output)` (max rel error of the exact identity `reverse[beta].d_k ==
-  omega.forward[beta+{k}]`). Array arithmetic lives in the `perturb` / `pair` hooks (numpy defaults), so
+  Richardson-extrapolated) and `reverse_forward_adjointness(forward, reverse, directions, omega,
+  *, pair_input, pair_output)` (max rel error of the exact identity `reverse[mu].d_k ==
+  omega.forward[mu+e_k]`). Array arithmetic lives in the `perturb` / `pair` hooks (numpy defaults), so
   the toy needs no hooks and FEniCS/PETSc supplies its own. `validation` itself imports no numpy.
 - `reference_problems.forward_probe_by_finite_difference` is now a thin numpy wrapper over it
   (signature + toy tests unchanged). The 4 hand-rolled FEniCS FD copies + stencil tables are gone.
@@ -123,7 +123,7 @@ observation test function CG1) to catch space-conflation bugs.
   a one-call `validation` cross-check. Verified by running both examples in the `fenicsx` env.
 - `tests/test_validation.py` (new) covers the helpers on the toy, incl. a custom `perturb` hook path.
   FEniCS tests call `validation` instead of re-pasting stencils. Full suite green in both envs
-  (`t3toolbox`: 62 passed / 2 skipped; `fenicsx`: 67 passed, nothing skipped).
+  (`t3toolbox`: 65 passed / 2 skipped; `fenicsx`: 70 passed, nothing skipped).
 
 ## Design decisions locked
 
@@ -152,12 +152,20 @@ observation test function CG1) to catch space-conflation bugs.
 - **`PartialTerm` directions encode multiplicity** (`theta_dirs`/`u_vecs` are `(vector, multiplicity)`
   pairs, not flat repeated tuples). Rationale: mixed partials commute, so each partial is symmetric in
   its theta- and u-slots — the directions are a *multiset*, and the flat tuple encoded a spurious
-  order. The multiplicity is exactly what an AD backend (the planned JAX hook) wants. We considered the
-  same vector-pair idea for `probe`'s own inputs/outputs and **rejected it**: there the multiset is over
-  hashable *labels*, where the typed `Multiset` is strictly better (canonical hashing/equality so it can
-  be a dict key, nesting, methods) and it mirrors the paper. So: `Multiset` of labels everywhere it can
-  be (the whole symbolic engine + the probe API); `(vector, multiplicity)` pairs only past `_lower`,
-  where labels become unhashable physics vectors.
+  order. The multiplicity is exactly what an AD backend (the planned JAX hook) wants. (`probe`'s own
+  inputs/outputs use a *separate* scheme — see the next bullet; `Multiset` stays purely internal, and
+  `(vector, multiplicity)` pairs appear only past `_lower`, where labels become unhashable vectors.)
+- **`probe` speaks `(vector, max_power)` pairs in, power-tuples out** — `Multiset` never crosses the
+  boundary. `probe(problem, directions, omega)` with `directions = ((a, 2), (b, 1))` (the distinct axes
+  + how far to probe each); returns dicts keyed by power-tuples, `forward[(2,1)] = D^3 q [a^2 b]`.
+  Rationale (first-principles, after much back-and-forth): a forward probe *is* a mixed partial /
+  Taylor coefficient of `q` restricted to the slice `theta0 + sum_k s_k d_k`, so its natural name is
+  the differentiation multi-index `mu` — which is also exactly what the downstream Taylor /
+  Tucker-tensor-train fitting indexes by. The label-`Multiset` mirrors the *algorithm* (paper Section 4)
+  and remains the internal index; the power-tuple mirrors the *result* and is the boundary index.
+  `probe` assigns position-labels to the directions, runs the unchanged engine, and translates the
+  `Multiset` keys -> power-tuples on the way out. (Supersedes the earlier "keep `Multiset` at the probe
+  boundary" decision.) `Multiset` / `subset_lattice` stay exported for advanced/engine use.
 
 The core method is complete: symbolic engine + numeric driver, validated end-to-end against finite
 differences. Candidate next slices (maintainer to choose):
