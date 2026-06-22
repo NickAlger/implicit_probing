@@ -85,6 +85,23 @@ observation test function CG1) to catch space-conflation bugs.
   `docs/fenics_hook.md` (the hook's interface mapping, the one-recipe form builder, BC handling,
   pluggable solvers, validation strategy, and the conda-env install).
 
+**`omega` is a per-probe argument (not a problem attribute), and linear composition.**
+
+- `probe(problem, alpha, direction_vectors, omega=None)`; `omega` is threaded to
+  `assemble_partial_sum(self, terms, omega)`; problems no longer store it. `omega=None` computes
+  forward probes only (skips the adjoint solves + reverse pass). The `OMEGA` sentinel stays in
+  `PartialTerm.pairing` so a problem can tell an output-functional pairing from an incremental adjoint
+  -- which is exactly what composition relies on.
+- `implicit_probing/backend/composition.py` -- `ComposedProblem(inner, input_map=C, output_map=W)`
+  probes the composed map `f = W o q o C` for linear input/output maps: pre-maps directions by `C`,
+  post-maps a forward probe by `W` and a reverse probe by `C^T`, pulls `omega` back by `W^T`. The
+  inner problem and the driver are unchanged; it is itself an `ImplicitProblem`, so compositions nest.
+  Plus a `LinearOperator` protocol and a `MatrixOperator` (numpy) adapter.
+- Tests: `tests/backend/test_composition.py` (toy: numpy `C`/`W` vs FD, reverse adjointness on the
+  composed map, identity-maps recover the inner) and `tests/test_fenics_composition.py` (gated: theta
+  from low-order polynomial features + observation restricted to boundary dofs). Docs:
+  `docs/composition.md`.
+
 ## Design decisions locked
 
 - Package / repo / import name: `implicit_probing` (GitHub renamed; local `origin` updated; local
@@ -126,6 +143,7 @@ differences. Candidate next slices (maintainer to choose):
 - Autodiff hooks (FEniCS `dl.derivative()`, JAX, and later others) should be **optional extras** — a
   user installs only the frameworks they actually use.
 - Git: branch `main`, tracking `origin/main`; all slices committed and pushed (Algorithm 1, the toy
-  reference problem, Algorithm 2, `docs/overview.md`, and the FEniCS hook step 1). Commits are authored by Nick with a
+  reference problem, Algorithm 2, `docs/overview.md`, the FEniCS hook + example, the omega-as-argument
+  refactor, and linear composition). Commits are authored by Nick with a
   `Co-Authored-By: Claude ...` trailer — Blake is a package author (LICENSE/pyproject/headers) but
   not on commit trailers while he is not at the keyboard.
