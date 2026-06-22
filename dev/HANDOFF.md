@@ -65,6 +65,22 @@ tensors via shared-operator solves), the module map, and how to use `probe(...)`
 `ImplicitProblem` interface (`ImplicitPolynomialProblem` is the template). Example snippets are
 run-verified.
 
+**FEniCS (DOLFINx) hook — step 1 done.** `implicit_probing/fenics.py` — `FenicsImplicitProblem`
+implements the `ImplicitProblem` interface for a modern-FEniCS PDE, **frozen** at a user-supplied
+expansion point `(theta, u)` (the user does the nonlinear solve outside, with the *real* BCs; the
+class only takes the *homogenized* BCs). One uniform recipe turns each `PartialTerm` into a UFL form:
+pair the output test function with `omega` / an adjoint vector via `ufl.replace`; nest `ufl.derivative`
+for filled directions; one more `ufl.derivative` *with no direction* for the open slot. Forms are
+summed per request and assembled once. Pluggable `forward_solver`/`adjoint_solver`; default is one
+reused LU (adjoint via transpose solve). Mixed spaces used on purpose (example: theta CG2, u CG3,
+observation test function CG1) to catch space-conflation bugs.
+- Test `tests/test_fenics.py` (dolfinx-gated via `pytest.importorskip`; runs in the `fenicsx` conda
+  env, skips in `t3toolbox`): forward probes vs finite differences (symmetric/asymmetric, ~1e-8) and
+  reverse probes vs `omega`-paired forward probes (exact discrete adjointness, ~1e-11, swept over the
+  lattice with no extra solves).
+- Env: a dedicated **`fenicsx`** conda env (DOLFINx 0.11) with implicit_probing `pip install -e` +
+  pytest. DOLFINx is conda-only (no pip extra). The numpy-only core is unaffected.
+
 ## Design decisions locked
 
 - Package / repo / import name: `implicit_probing` (GitHub renamed; local `origin` updated; local
@@ -79,15 +95,14 @@ run-verified.
 The core method is complete: symbolic engine + numeric driver, validated end-to-end against finite
 differences. Candidate next slices (maintainer to choose):
 
-1. **Autodiff-framework hooks.** Implement `ImplicitProblem` for **FEniCS** (assemble the partial-sum
-   requests as single combined forms via `dl.derivative()`; respect the Dirichlet-BC rule — see
-   memory `dirichlet-bc-handling`) and/or **JAX** (nested `jvp`/`jacfwd`). Optional extras so users
-   install only what they use.
+1. **Autodiff-framework hooks.** FEniCS/DOLFINx hook **done** (`fenics.py`, see above). Remaining: a
+   **JAX** hook (nested `jvp`/`jacfwd`), as an optional pip extra.
 2. **Thin OO frontend.** Now that the functional backend works, add the light OO layer (e.g. an
    `ImplicitProblem` base/adapters + a top-level `probe(...)` entry point) per the original plan.
-3. **Examples + more docs.** `docs/overview.md` exists (the user-facing tour); still to do: a worked
-   example *script* (toy -> probes) and deeper `docs/` (the math map, the assembly/interface
-   contract; Sphinx).
+3. **Examples + more docs.** `docs/overview.md` exists. **In progress (step 2):** a polished
+   `examples/fenics_poisson.py` (the nonlinear Poisson example, fuller probe sweep + FD validation)
+   and a short `docs/` note on the FEniCS hook (interface mapping + the conda-env requirement). Also
+   still wanted: a toy-only example script and Sphinx.
 4. **Probe-to-tensor bridge (optional).** Package the forward/reverse probes into whatever a
    downstream consumer (e.g. T3Toolbox fitting) expects — kept out of this repo unless wanted.
 
@@ -109,6 +124,6 @@ differences. Candidate next slices (maintainer to choose):
 - Autodiff hooks (FEniCS `dl.derivative()`, JAX, and later others) should be **optional extras** — a
   user installs only the frameworks they actually use.
 - Git: branch `main`, tracking `origin/main`; all slices committed and pushed (Algorithm 1, the toy
-  reference problem, Algorithm 2, and `docs/overview.md`). Commits are authored by Nick with a
+  reference problem, Algorithm 2, `docs/overview.md`, and the FEniCS hook step 1). Commits are authored by Nick with a
   `Co-Authored-By: Claude ...` trailer — Blake is a package author (LICENSE/pyproject/headers) but
   not on commit trailers while he is not at the keyboard.
