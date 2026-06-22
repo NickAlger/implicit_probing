@@ -35,6 +35,8 @@ import typing as typ
 import numpy as np
 from numpy.typing import NDArray
 
+from implicit_probing.backend.driver import OMEGA, PartialTerm
+
 __all__ = [
     'Polynomial',
     'ImplicitPolynomialProblem',
@@ -107,6 +109,27 @@ class Polynomial:
                 term = np.tensordot(term, w, axes=([term.ndim - 1], [0]))  # leaves (out_dim, in_dim)
             J = J + term / math.factorial(m - 1)
         return J
+
+    def derivative_open_slot(
+            self,
+            w:          NDArray,             # shape (in_dim,)
+            directions: typ.Sequence[NDArray],  # k filled vectors, each shape (in_dim,)
+    ) -> NDArray:                            # shape (out_dim, in_dim); one derivative slot left free
+        """``D^{k+1} P(w)(directions..., e_i)`` for each basis ``e_i`` -- the partial with one open slot.
+
+        The free column index ranges over all of ``w``; the caller slices out the theta- or u-block it
+        wants open. (``derivative_open_slot(w, ()) == jacobian(w)``.)
+        """
+        k = len(directions)
+        result = np.zeros((self.out_dim, self.in_dim))
+        for m in range(k + 1, self.degree + 1):
+            term = self.coeffs[m]                                    # (out_dim,) + (in_dim,)*m
+            for d in directions:                                     # contract the k filled directions
+                term = np.tensordot(term, d, axes=([term.ndim - 1], [0]))
+            for _ in range(m - k - 1):                               # contract all but one of the rest with w
+                term = np.tensordot(term, w, axes=([term.ndim - 1], [0]))
+            result = result + term / math.factorial(m - k - 1)       # term shape (out_dim, in_dim)
+        return result
 
 
 def _symmetrize_input_axes(
@@ -249,6 +272,37 @@ class ImplicitPolynomialProblem:
     ) -> NDArray:                                # -> (n_q,);  d_theta^a d_u^b Q at (theta0, u0)
         dirs = [self.lift_theta(d) for d in theta_dirs] + [self.lift_u(v) for v in u_vecs]
         return self.Q.derivative(self.w0, dirs)
+
+    # --- the backend.driver.ImplicitProblem interface (a reference implementation of the hook) ---
+
+    def solve_operator(self, b: NDArray) -> NDArray:          # A x = b
+        return self.solve_A(b)
+
+    def solve_operator_adjoint(self, c: NDArray) -> NDArray:  # A^T x = c
+        return self.solve_A_adjoint(c)
+
+    def assemble_partial_sum(
+            self,
+            terms: typ.Sequence[PartialTerm],
+    ) -> NDArray:                                # -> the assembled sum (shape depends on the terms)
+        """Assemble ``sum_i terms[i]`` for the polynomial problem (one numpy contraction per term).
+
+        For FEniCS this is where one would build a single combined form and assemble once; the
+        polynomial just loops and adds (the interface is what is being demonstrated, not a speedup).
+        """
+        result = None
+        for t in terms:
+            F = self.R if t.function == 'R' else self.Q
+            dirs = [self.lift_theta(d) for d in t.theta_dirs] + [self.lift_u(v) for v in t.u_vecs]
+            if t.open_slot is None:
+                contribution = t.coefficient * F.derivative(self.w0, dirs)        # (out_dim,)
+            else:
+                G = F.derivative_open_slot(self.w0, dirs)                          # (out_dim, in_dim)
+                block = G[:, :self.p] if t.open_slot == 'theta' else G[:, self.p:]  # (out_dim, slot_dim)
+                pairing = self.omega if t.pairing is OMEGA else t.pairing          # (out_dim,) covector
+                contribution = t.coefficient * (pairing @ block)                   # (slot_dim,)
+            result = contribution if result is None else result + contribution
+        return result
 
 
 def make_toy_problem(

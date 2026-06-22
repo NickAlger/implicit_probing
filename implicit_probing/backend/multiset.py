@@ -71,6 +71,14 @@ class Multiset:
         """The distinct elements, ordered deterministically (no multiplicities)."""
         return tuple(e for e, _ in self.items())
 
+    def expanded(self) -> typ.Tuple:
+        """The elements repeated by multiplicity, deterministically ordered.
+
+        ``Multiset([1, 1, 2]).expanded() == (1, 1, 2)``. Useful for fanning a multiset of direction
+        labels / incremental indices out into the flat list of vectors an assembly request needs.
+        """
+        return tuple(e for e, c in self.items() for _ in range(c))
+
     @property
     def cardinality(self) -> int:
         """Total number of elements counted with multiplicity (``== len(self)``)."""

@@ -36,7 +36,28 @@ Python, no numpy.
   truth matched to Q's exact partials on an explicit map for symmetric/partial/asymmetric order-3
   probes, plus a first-order end-to-end check on the implicit map (agrees to ~1e-14).
 
-Full suite green: **43 tests + 20 subtests, ~0.24s**. Run:
+**Slice 2 complete: the numeric driver (Algorithm 2) — the core method now runs end-to-end.**
+
+- `implicit_probing/backend/symbolic.py` (added) — `extract_state_rhs` / `extract_adjoint_rhs`:
+  isolate the operator term (`A uhat_beta` / `A* vhat_beta`) and return the rest (eqs 10-11, 17-18).
+- `implicit_probing/backend/driver.py` — the **vector-type-agnostic** driver:
+  - `PartialTerm` — the lowered request DTO: `(coefficient, function R/Q, theta_dirs, u_vecs,
+    open_slot in {None,'theta','u'}, pairing in {None, OMEGA, vhat-vector})`.
+  - `OMEGA` — sentinel meaning "pair the output with the problem's omega functional".
+  - `ImplicitProblem` — the 3-method `Protocol`: `solve_operator`, `solve_operator_adjoint`,
+    `assemble_partial_sum`. The driver does NO arithmetic on physics vectors; it only resolves
+    symbolic labels to vectors, hands whole sums to the problem, and routes the opaque results.
+  - `probe(problem, alpha, direction_vectors)` -> `(forward, reverse)` dicts over every `beta <=
+    alpha`. Forward = output-space vector; reverse = parameter-space covector (gradient-like).
+- `implicit_probing/reference_problems.py` (extended) — `Polynomial.derivative_open_slot` (one open
+  derivative slot) and the `ImplicitProblem` hook on the toy (`solve_operator` /
+  `solve_operator_adjoint` / `assemble_partial_sum`), a reference implementation of the interface.
+- Tests `tests/backend/test_driver.py` — extraction unit tests, probe structure, and the driver's
+  probes vs the FD ground truth across symmetric / partially-symmetric / fully-asymmetric probes
+  (orders 1-3, ~1e-9 agreement), reverse-probe identity `psi_beta . d = omega(D^{|beta|+1} q)`, and
+  the order-4 vanishing-top-partial edge case.
+
+Full suite green: **53 tests + 29 subtests, ~0.5s**. Run:
 `PYTHONPATH=$PWD <env-python> -m pytest tests/ -q`.
 
 ## Design decisions locked
@@ -48,22 +69,32 @@ Full suite green: **43 tests + 20 subtests, ~0.24s**. Run:
 - `theta_0` will be a first-class input (multi-point gathering = trivial outer loop), for the
   maintainer's future global-polynomial work.
 
-## Next slice (Algorithm 2 — the numeric driver)
+## Next steps (Algorithms 1 & 2 are done and validated — pick the next direction)
 
-1. **RHS extraction (symbolic).** From the `R` expansion `D_beta`, isolate the operator term
-   `(ID, 'R', empty, {beta})` (`= A uhat_beta`) and read off `b_beta = -(everything else)`; likewise
-   `c_beta` from the `R^adj` expansion. Pure-symbolic; sits next to `symbolic.py`.
-2. **Problem interface.** Formalize the callable set already prototyped by
-   `ImplicitPolynomialProblem`: `solve_state`, a linearized operator with `solve_A` / `solve_A_adjoint`
-   (`A`, `A*`), directional partials `partial_R(theta_dirs, u_vecs)` / `partial_Q(...)`, and `omega`.
-   Decide protocol/ABC vs a duck-typed convention.
-3. **Numeric driver (Algorithm 2).** Walk the lattice, solve the incremental state/adjoint systems,
-   assemble forward probes `y_beta` and reverse probes `psi_beta`. Map the symbolic direction labels
-   in `alpha` to actual probe vectors.
-4. **Validation.** Already wired: compare driver probes to `forward_probe_by_finite_difference` on
-   `make_toy_problem`, sweeping symmetric / partially-symmetric / fully-asymmetric `alpha` and orders
-   1..4 (degree-3 toy => order-4 exercises the vanishing-top-order edge case). Reverse probes checked
-   by `psi = omega(forward probe)`.
+The core method is complete: symbolic engine + numeric driver, validated end-to-end against finite
+differences. Candidate next slices (maintainer to choose):
+
+1. **Autodiff-framework hooks.** Implement `ImplicitProblem` for **FEniCS** (assemble the partial-sum
+   requests as single combined forms via `dl.derivative()`; respect the Dirichlet-BC rule — see
+   memory `dirichlet-bc-handling`) and/or **JAX** (nested `jvp`/`jacfwd`). Optional extras so users
+   install only what they use.
+2. **Thin OO frontend.** Now that the functional backend works, add the light OO layer (e.g. an
+   `ImplicitProblem` base/adapters + a top-level `probe(...)` entry point) per the original plan.
+3. **Examples + docs.** A worked example script (toy problem -> probes), and fold the design
+   rationale into `docs/` (the math map, the assembly/interface contract).
+4. **Probe-to-tensor bridge (optional).** Package the forward/reverse probes into whatever a
+   downstream consumer (e.g. T3Toolbox fitting) expects — kept out of this repo unless wanted.
+
+## Interface notes locked in (for the hook authors)
+
+- Driver requests sums, never singletons; the whole (possibly mixed-R/Q) sum goes to the problem so
+  it does all assembly + cross-term addition (FEniCS: one combined form).
+- Driver is vector-type-agnostic: zero arithmetic on physics vectors; integer coefficients applied
+  inside `assemble_partial_sum`; `A` assembled/factorized once and reused for all solves.
+- Forward probe -> output vector; reverse probe -> parameter covector (open slot left free).
+- A `PartialTerm` with `open_slot` set and `pairing` (OMEGA or a vhat-vector) means: leave that slot
+  as the test function, pair the output with omega (Q-terms) or contract with the adjoint vector
+  (R-terms). `reference_problems.ImplicitPolynomialProblem.assemble_partial_sum` is the reference.
 
 ## Reminders for later
 

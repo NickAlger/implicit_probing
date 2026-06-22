@@ -45,6 +45,7 @@ __all__ = [
     'Expansion', 'LatticeExpansions',
     'seed_forward_q', 'seed_residual_r', 'seed_reverse',
     'differentiate_term', 'differentiate_over_lattice',
+    'extract_state_rhs', 'extract_adjoint_rhs',
     'format_term', 'format_expansion',
 ]
 
@@ -196,6 +197,44 @@ def differentiate_over_lattice(
                 acc[new_term] += coeff * multiplier
         expansions[beta] = {t: c for t, c in acc.items() if c != 0}
     return expansions
+
+
+# --- isolating the operator term to read off the incremental right-hand sides (Algorithm 2 setup) ---
+
+def extract_state_rhs(
+        expansion: Expansion,              # D_beta of the residual R, i.e. D^|beta| R Theta^beta
+        beta:      Multiset,
+) -> Expansion:
+    """The incremental-state right-hand side terms ``b_beta`` (still symbolic), t4s.pdf eqs (10)-(11).
+
+    The incremental state equation ``0 = D^|beta| R Theta^beta`` contains exactly one operator term,
+    ``(ID, 'R', empty, {beta})`` = ``d_u R uhat_beta`` = ``A uhat_beta``. This isolates it (the future
+    left-hand side of ``A uhat_beta = b_beta``) and returns every *other* term; the caller negates and
+    assembles them as ``b_beta``.
+    """
+    operator = Term(ID, 'R', Multiset(), Multiset([beta]))
+    if expansion.get(operator, 0) != 1:
+        raise ValueError(f'expected the operator term {operator!r} with coefficient 1 in the state '
+                         f'expansion for beta={beta!r}; got coefficient {expansion.get(operator, 0)}')
+    return {t: c for t, c in expansion.items() if t != operator}
+
+
+def extract_adjoint_rhs(
+        expansion: Expansion,              # D_beta of the reverse seed, i.e. D^|beta| of the Lagrangian
+        beta:      Multiset,
+) -> Expansion:
+    """The incremental-adjoint right-hand side terms ``c_beta`` (still symbolic), t4s.pdf eqs (17)-(18).
+
+    Under an open u-slot the term ``(adjoint(beta), 'R', empty, empty)`` is ``(d_u R)(vhat_beta)`` =
+    ``A* vhat_beta``; this isolates it (the future left-hand side of ``A* vhat_beta = c_beta``) and
+    returns every other term, to be assembled (with the open u-slot) and negated as ``c_beta``. The
+    base case ``beta = empty`` recovers ``A* v = -omega(d_u Q)`` (the adjoint equation, eq 14).
+    """
+    operator = Term(adjoint(beta), 'R', Multiset(), Multiset())
+    if expansion.get(operator, 0) != 1:
+        raise ValueError(f'expected the operator term {operator!r} with coefficient 1 in the adjoint '
+                         f'expansion for beta={beta!r}; got coefficient {expansion.get(operator, 0)}')
+    return {t: c for t, c in expansion.items() if t != operator}
 
 
 # --- human-readable formatting (for debugging and examples; not used by the algorithm) ---
