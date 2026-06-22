@@ -296,7 +296,10 @@ class ImplicitPolynomialProblem:
         result = None
         for t in terms:
             F = self.R if t.function == 'R' else self.Q
-            dirs = [self.lift_theta(d) for d in t.theta_dirs] + [self.lift_u(v) for v in t.u_vecs]
+            # theta_dirs / u_vecs are (vector, multiplicity) pairs; the dense symmetric contraction
+            # can't use the multiplicity, so just expand it back to a flat list of direction vectors.
+            dirs = ([self.lift_theta(d) for d, m in t.theta_dirs for _ in range(m)]
+                    + [self.lift_u(v) for v, m in t.u_vecs for _ in range(m)])
             if t.open_slot is None:
                 contribution = t.coefficient * F.derivative(self.w0, dirs)        # (out_dim,)
             else:

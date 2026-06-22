@@ -51,8 +51,11 @@ Every `PartialTerm` the driver requests becomes a UFL form by three moves:
 1. **Pairing** — what to do with the output test function `v`: keep it (forward probes / residual
    RHS); `ufl.replace(form, {v: omega})` (ω-paired); or `ufl.replace(form, {v: v_hat})` (paired with
    an incremental adjoint).
-2. **Filled directions** — one `ufl.derivative(form, theta, d)` per probing direction, one
-   `ufl.derivative(form, u, u_hat)` per incremental state.
+2. **Filled directions** — `theta_dirs` and `u_vecs` arrive as `(vector, multiplicity)` pairs (the
+   partial is symmetric in each block, so they are a multiset). `ufl.derivative` takes one direction at
+   a time, so we nest `ufl.derivative(form, theta, d)` *multiplicity* times per distinct `d` (and
+   likewise `ufl.derivative(form, u, u_hat)`) — this hook unrolls the repetition rather than exploiting
+   it.
 3. **Open slot** — for reverse objects, one more `ufl.derivative(form, u)` or
    `ufl.derivative(form, theta)` *with no explicit direction*, which introduces a fresh test function
    in that space (the free / "open" slot).

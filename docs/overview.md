@@ -127,8 +127,11 @@ Two things to know:
 - **`assemble_partial_sum` is asked for a whole sum, not one partial at a time.** It receives a list
   of `PartialTerm`s — each a coefficient times a directional partial derivative of `R` or `Q`,
   possibly with one slot left open (the test function) and an outer pairing (the functional `OMEGA`,
-  or an adjoint vector) — and returns their sum as one vector. Requesting the whole sum lets you build
-  a single combined form and assemble it once, which matters for performance in libraries like FEniCS.
+  or an adjoint vector) — and returns their sum as one vector. The directions a partial is contracted
+  against come as `(vector, multiplicity)` pairs (the partial is symmetric in each block, so they are
+  a multiset): a backend can exploit the multiplicity or just expand it back to a flat list. Requesting
+  the whole sum lets you build a single combined form and assemble it once, which matters for
+  performance in libraries like FEniCS.
 
 `reference_problems.ImplicitPolynomialProblem` is a complete, readable implementation of these three
 methods for a polynomial map — use it as a template.

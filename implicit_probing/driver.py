@@ -57,17 +57,24 @@ OMEGA = _OmegaFunctional()  # the single sentinel instance; problems test ``term
 class PartialTerm:
     """One term of a sum the driver asks a problem to assemble.
 
-    Represents ``coefficient * pairing( d_theta^a d_u^b function (theta_dirs..., [open], u_vecs...,
-    [open]) )``, evaluated at the expansion point: an ``a = len(theta_dirs)``-th theta-partial and
-    ``b = len(u_vecs)``-th u-partial of ``R`` or ``Q``, contracted against the given direction
-    vectors, with at most one slot left OPEN (it becomes the test-function / free slot, so the result
-    is a covector in that slot's space) and an optional outer pairing. All vectors are opaque to the
-    driver -- they are whatever the problem produced and consumes.
+    Represents ``coefficient * pairing( d_theta^a d_u^b function (theta-dirs, [open], u-dirs, [open]) )``,
+    evaluated at the expansion point: an ``a``-th theta-partial and ``b``-th u-partial of ``R`` or
+    ``Q``, contracted against the given direction vectors, with at most one slot left OPEN (it becomes
+    the test-function / free slot, so the result is a covector in that slot's space) and an optional
+    outer pairing. All vectors are opaque to the driver -- they are whatever the problem produced and
+    consumes.
+
+    Because mixed partials commute, each partial is symmetric in its theta-slots and (separately) in
+    its u-slots, so the directions form a *multiset*, not a sequence. ``theta_dirs`` and ``u_vecs`` are
+    therefore given as ``(vector, multiplicity)`` pairs -- the distinct directions with their powers --
+    and the partial orders are the multiplicity sums (``a`` over ``theta_dirs``, ``b`` over ``u_vecs``).
+    A backend may exploit the multiplicity -- e.g. a Taylor-mode / nested-jvp AD hook pushes one
+    order-``m`` jet along a direction of multiplicity ``m`` -- or just expand it back to a flat list.
     """
     coefficient: int                      # integer multiplier (may be negative)
     function:    str                      # 'R' or 'Q'
-    theta_dirs:  typ.Tuple                # filled theta-direction vectors
-    u_vecs:      typ.Tuple                # filled incremental-state vectors
+    theta_dirs:  typ.Tuple                # ((theta-direction vector, multiplicity), ...) -- a multiset
+    u_vecs:      typ.Tuple                # ((incremental-state vector, multiplicity), ...) -- a multiset
     open_slot:   typ.Optional[str]        # None | 'theta' | 'u' -- which slot is left free
     pairing:     typ.Any                  # None | OMEGA | an incremental-adjoint vector
 
@@ -115,11 +122,15 @@ def _lower(
         open_slot,                         # None | 'theta' | 'u'
         sign,                              # +1 for probes, -1 for right-hand sides
 ):
-    """Lower a symbolic expansion into a list of ``PartialTerm`` by substituting vectors for labels."""
+    """Lower a symbolic expansion into a list of ``PartialTerm`` by substituting vectors for labels.
+
+    The symbolic multisets are carried through as multiplicity, not flattened: ``theta_dirs`` and
+    ``u_vecs`` come out as ``(vector, multiplicity)`` pairs (see ``PartialTerm``).
+    """
     terms = []
     for term, coeff in expansion.items():
-        theta_dirs = tuple(direction_vectors[label] for label in term.theta.expanded())
-        u_vecs = tuple(u_hat[gamma] for gamma in term.incrementals.expanded())
+        theta_dirs = tuple((direction_vectors[label], mult) for label, mult in term.theta.items())
+        u_vecs = tuple((u_hat[gamma], mult) for gamma, mult in term.incrementals.items())
         pairing = _resolve_pairing(term.pairing, v_hat)
         terms.append(PartialTerm(sign * coeff, term.function, theta_dirs, u_vecs, open_slot, pairing))
     return terms

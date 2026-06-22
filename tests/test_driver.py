@@ -129,5 +129,57 @@ class TestProbeAgainstFiniteDifference(unittest.TestCase):
         np.testing.assert_allclose(forward[alpha], expected, atol=1e-3)
 
 
+class _RecordingProblem:
+    """Wraps an ImplicitProblem, capturing every PartialTerm handed to assemble_partial_sum."""
+    def __init__(self, inner):
+        self.inner = inner
+        self.terms = []
+
+    def solve_operator(self, b):
+        return self.inner.solve_operator(b)
+
+    def solve_operator_adjoint(self, c):
+        return self.inner.solve_operator_adjoint(c)
+
+    def assemble_partial_sum(self, terms, omega):
+        self.terms.extend(terms)
+        return self.inner.assemble_partial_sum(terms, omega)
+
+
+class TestPartialTermRepresentation(unittest.TestCase):
+    """theta_dirs / u_vecs are (vector, multiplicity) pairs -- a multiset, not a flat sequence."""
+
+    def setUp(self):
+        self.dirs = {1: np.array([1.0, 0.3]), 2: np.array([0.4, -0.6])}
+        self.rec = _RecordingProblem(make_toy_problem(seed=0))
+        probe(self.rec, ms(1, 1, 2), self.dirs, omega=np.array([0.7, -0.4]))  # repeats direction 1
+        self.assertTrue(self.rec.terms)                          # something was actually assembled
+
+    def test_directions_are_vector_multiplicity_pairs(self):
+        for t in self.rec.terms:
+            for block in (t.theta_dirs, t.u_vecs):
+                for pair in block:
+                    self.assertEqual(len(pair), 2)               # (vector, multiplicity)
+                    _, mult = pair
+                    self.assertIsInstance(mult, int)
+                    self.assertGreaterEqual(mult, 1)
+
+    def test_each_block_groups_distinct_directions(self):
+        # within a block the entries are distinct directions (grouped by multiplicity, not split)
+        for t in self.rec.terms:
+            for block in (t.theta_dirs, t.u_vecs):
+                ids = [id(vec) for vec, _ in block]
+                self.assertEqual(len(ids), len(set(ids)))
+
+    def test_repetition_is_encoded_not_flattened(self):
+        # probing D^3 q with direction 1 twice must surface a multiplicity >= 2 in each block somewhere
+        # (the old flat representation would have lost this). theta: the d^3/dtheta^3 . d1^2 d2 term;
+        # u: the incremental RHS for uhat_{1,1} carries uhat_1^2.
+        max_theta = max((m for t in self.rec.terms for _, m in t.theta_dirs), default=0)
+        max_u = max((m for t in self.rec.terms for _, m in t.u_vecs), default=0)
+        self.assertGreaterEqual(max_theta, 2)
+        self.assertGreaterEqual(max_u, 2)
+
+
 if __name__ == '__main__':
     unittest.main()

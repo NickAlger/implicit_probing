@@ -13,7 +13,8 @@ and turns each ``PartialTerm`` into a single UFL form.
 The whole hook is one uniform recipe (``_term_form``): take the base form (``R`` or ``Q``, each a
 1-form in its output test function), optionally **replace** that test function with the pairing
 (``OMEGA`` -> the functional ``omega``; an adjoint vector -> ``v̂``), **nest** one ``ufl.derivative``
-per supplied direction, and (for reverse objects) introduce the **open slot** as one more
+per supplied direction (repeated by its multiplicity -- ``ufl.derivative`` is one direction at a time,
+so this hook does not exploit the repetition), and (for reverse objects) introduce the **open slot** as one more
 ``ufl.derivative`` with no explicit direction. Forms within a request share a test-function space, so
 they are summed and assembled **once** (the FEniCS performance win behind ``assemble_partial_sum``).
 
@@ -132,11 +133,14 @@ class FenicsImplicitProblem:
         pairing = omega if t.pairing is OMEGA else t.pairing
         if pairing is not None:
             form = ufl.replace(form, {out_arg: pairing})
-        # filled directions
-        for d in t.theta_dirs:
-            form = ufl.derivative(form, self.theta, d)
-        for w in t.u_vecs:
-            form = ufl.derivative(form, self.u, w)
+        # filled directions: (vector, multiplicity) pairs; ufl.derivative is per-direction, so nest
+        # one derivative per copy (this hook gains nothing from the multiplicity -- it just unrolls it).
+        for d, mult in t.theta_dirs:
+            for _ in range(mult):
+                form = ufl.derivative(form, self.theta, d)
+        for w, mult in t.u_vecs:
+            for _ in range(mult):
+                form = ufl.derivative(form, self.u, w)
         # open slot: one more derivative with no direction -> a fresh test function in that space
         if t.open_slot == 'u':
             form = ufl.derivative(form, self.u)

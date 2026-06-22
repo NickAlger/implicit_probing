@@ -93,7 +93,8 @@ class ComposedProblem:
                     mapped[key] = self.input_map.apply(d)
                 return mapped[key]
 
-            terms = [dataclasses.replace(t, theta_dirs=tuple(C(d) for d in t.theta_dirs)) for t in terms]
+            terms = [dataclasses.replace(t, theta_dirs=tuple((C(d), mult) for d, mult in t.theta_dirs))
+                     for t in terms]
 
         out = self.inner.assemble_partial_sum(terms, inner_omega)
 

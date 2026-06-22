@@ -42,7 +42,10 @@ Python, no numpy.
   isolate the operator term (`A uhat_beta` / `A* vhat_beta`) and return the rest (eqs 10-11, 17-18).
 - `implicit_probing/driver.py` — the **vector-type-agnostic** driver:
   - `PartialTerm` — the lowered request DTO: `(coefficient, function R/Q, theta_dirs, u_vecs,
-    open_slot in {None,'theta','u'}, pairing in {None, OMEGA, vhat-vector})`.
+    open_slot in {None,'theta','u'}, pairing in {None, OMEGA, vhat-vector})`. `theta_dirs`/`u_vecs` are
+    `(vector, multiplicity)` pairs (the partial is symmetric in each block, so the directions are a
+    multiset, not a sequence — encoding multiplicity rather than flattening lets an AD backend push one
+    order-`m` jet per direction; the reference + FEniCS hooks just expand it back to a flat list).
   - `OMEGA` — sentinel meaning "pair the output with the problem's omega functional".
   - `ImplicitProblem` — the 3-method `Protocol`: `solve_operator`, `solve_operator_adjoint`,
     `assemble_partial_sum`. The driver does NO arithmetic on physics vectors; it only resolves
@@ -146,8 +149,15 @@ observation test function CG1) to catch space-conflation bugs.
   extra; **no T3Toolbox dependency**.
 - `theta_0` will be a first-class input (multi-point gathering = trivial outer loop), for the
   maintainer's future global-polynomial work.
-
-## Next steps (Algorithms 1 & 2 are done and validated — pick the next direction)
+- **`PartialTerm` directions encode multiplicity** (`theta_dirs`/`u_vecs` are `(vector, multiplicity)`
+  pairs, not flat repeated tuples). Rationale: mixed partials commute, so each partial is symmetric in
+  its theta- and u-slots — the directions are a *multiset*, and the flat tuple encoded a spurious
+  order. The multiplicity is exactly what an AD backend (the planned JAX hook) wants. We considered the
+  same vector-pair idea for `probe`'s own inputs/outputs and **rejected it**: there the multiset is over
+  hashable *labels*, where the typed `Multiset` is strictly better (canonical hashing/equality so it can
+  be a dict key, nesting, methods) and it mirrors the paper. So: `Multiset` of labels everywhere it can
+  be (the whole symbolic engine + the probe API); `(vector, multiplicity)` pairs only past `_lower`,
+  where labels become unhashable physics vectors.
 
 The core method is complete: symbolic engine + numeric driver, validated end-to-end against finite
 differences. Candidate next slices (maintainer to choose):
