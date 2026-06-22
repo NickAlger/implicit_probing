@@ -71,5 +71,6 @@ dmypy.json
 .pyre/
 .pytype/
 
-# Scratch array artifacts written by tests/examples (regenerable, never fixtures)
+# Scratch artifacts written by tests/examples (regenerable, never fixtures)
 *.npz
+out_*/

@@ -80,6 +80,10 @@ observation test function CG1) to catch space-conflation bugs.
   lattice with no extra solves).
 - Env: a dedicated **`fenicsx`** conda env (DOLFINx 0.11) with implicit_probing `pip install -e` +
   pytest. DOLFINx is conda-only (no pip extra). The numpy-only core is unaffected.
+- **Step 2 done:** `examples/fenics_poisson.py` (the full nonlinear-Poisson example: probe sweep + FD
+  validation + reverse adjointness + optional pyvista viz of the state and QoI-gradient fields) and
+  `docs/fenics_hook.md` (the hook's interface mapping, the one-recipe form builder, BC handling,
+  pluggable solvers, validation strategy, and the conda-env install).
 
 ## Design decisions locked
 
@@ -99,10 +103,8 @@ differences. Candidate next slices (maintainer to choose):
    **JAX** hook (nested `jvp`/`jacfwd`), as an optional pip extra.
 2. **Thin OO frontend.** Now that the functional backend works, add the light OO layer (e.g. an
    `ImplicitProblem` base/adapters + a top-level `probe(...)` entry point) per the original plan.
-3. **Examples + more docs.** `docs/overview.md` exists. **In progress (step 2):** a polished
-   `examples/fenics_poisson.py` (the nonlinear Poisson example, fuller probe sweep + FD validation)
-   and a short `docs/` note on the FEniCS hook (interface mapping + the conda-env requirement). Also
-   still wanted: a toy-only example script and Sphinx.
+3. **Examples + more docs.** Done: `docs/overview.md`, `examples/fenics_poisson.py`,
+   `docs/fenics_hook.md`. Still wanted: a toy-only example script and a Sphinx build.
 4. **Probe-to-tensor bridge (optional).** Package the forward/reverse probes into whatever a
    downstream consumer (e.g. T3Toolbox fitting) expects — kept out of this repo unless wanted.
 
