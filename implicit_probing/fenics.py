@@ -56,8 +56,6 @@ class FenicsImplicitProblem:
         The output/observation as a 1-form linear in a test function in the observation space ``V_q``.
     theta, u : dolfinx.fem.Function
         The frozen expansion point; ``u`` must already solve ``R(theta, u) = 0`` (with the real BCs).
-    omega : dolfinx.fem.Function
-        The output functional, a covector in ``V_q`` (paired with the output in reverse probes).
     bcs : list[dolfinx.fem.DirichletBC] | None
         The **homogenized** (zero-valued) Dirichlet BCs of the state space, applied to ``A`` and to
         every incremental right-hand side.
@@ -66,19 +64,18 @@ class FenicsImplicitProblem:
         omitted, a single reused LU factorization of ``A`` is used (adjoint via its transpose solve).
     """
 
-    def __init__(self, R_form, Q_form, theta, u, omega, bcs=None,
+    def __init__(self, R_form, Q_form, theta, u, bcs=None,
                  forward_solver=None, adjoint_solver=None):
         self.R_form = R_form
         self.Q_form = Q_form
         self.theta = theta
         self.u = u
-        self.omega = omega
         self.bcs = list(bcs) if bcs is not None else []
         self.v_R = R_form.arguments()[0]        # output test function, in the state space V_u
         self.v_Q = Q_form.arguments()[0]        # observation test function, in V_q
         self.V_u = u.function_space
         self.V_theta = theta.function_space
-        self.V_q = omega.function_space
+        self.V_q = self.v_Q.ufl_function_space()  # observation space (from the Q-form test function)
 
         # Linearized state operator A = d_u R at (theta, u), with homogenized Dirichlet BCs (identity
         # rows on constrained dofs). Homogeneous BCs => the BC columns are multiplied by zero
@@ -101,11 +98,14 @@ class FenicsImplicitProblem:
         """Solve A* x = c; return the incremental adjoint as a Function in V_u."""
         return self._wrap(self._solve(c, transpose=True))
 
-    def assemble_partial_sum(self, terms):
-        """Assemble sum_i terms[i] as one combined UFL form, then one PETSc vector."""
+    def assemble_partial_sum(self, terms, omega):
+        """Assemble sum_i terms[i] as one combined UFL form, then one PETSc vector.
+
+        OMEGA pairings are resolved to ``omega`` (a Function in the observation space ``V_q``).
+        """
         combined = None
         for t in terms:
-            form = self._term_form(t)
+            form = self._term_form(t, omega)
             if form.empty():
                 continue                         # this partial vanishes for these forms (e.g. d_theta Q)
             form = t.coefficient * form
@@ -122,17 +122,16 @@ class FenicsImplicitProblem:
 
     # --- internals ---
 
-    def _term_form(self, t):
+    def _term_form(self, t, omega):
         """Turn one PartialTerm into its UFL form (the uniform recipe; see the module docstring)."""
         if t.function == 'R':
             form, out_arg = self.R_form, self.v_R
         else:
             form, out_arg = self.Q_form, self.v_Q
-        # pairing: replace the output test function with omega or an adjoint vector
-        if t.pairing is OMEGA:
-            form = ufl.replace(form, {out_arg: self.omega})
-        elif t.pairing is not None:
-            form = ufl.replace(form, {out_arg: t.pairing})
+        # pairing: replace the output test function with omega (resolved here) or an adjoint vector
+        pairing = omega if t.pairing is OMEGA else t.pairing
+        if pairing is not None:
+            form = ufl.replace(form, {out_arg: pairing})
         # filled directions
         for d in t.theta_dirs:
             form = ufl.derivative(form, self.theta, d)

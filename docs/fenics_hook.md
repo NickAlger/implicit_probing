@@ -28,8 +28,8 @@ conditions. The class never runs a nonlinear solve. It only assembles the linear
 from implicit_probing.fenics import FenicsImplicitProblem
 from implicit_probing.backend.driver import probe
 
-problem = FenicsImplicitProblem(R_form, Q_form, theta, u, omega, bcs=[bc_homog])
-forward, reverse = probe(problem, alpha, direction_vectors)
+problem = FenicsImplicitProblem(R_form, Q_form, theta, u, bcs=[bc_homog])
+forward, reverse = probe(problem, alpha, direction_vectors, omega)
 ```
 
 - `R_form`, `Q_form` — the residual and the observation, each a UFL 1-form linear in a test function
@@ -37,11 +37,12 @@ forward, reverse = probe(problem, alpha, direction_vectors)
   observation test function in CG1. Using distinct spaces is encouraged: it makes any accidental
   conflation of the parameter, state, and observation spaces fail loudly.
 - `theta`, `u` — the frozen point (`u` already solves `R(theta, u) = 0`).
-- `omega` — the output functional (a `Function` in the observation space), paired with the output in
-  reverse probes.
 - `bcs` — the **homogenized** (zero-valued) Dirichlet BCs of the state space.
 - `direction_vectors` — a `{label: Function}` map giving the smooth parameter-space directions to
   probe in (use smooth fields, not random dof vectors, so finite-difference checks stay clean).
+- `omega` — the output functional (a `Function` in the observation space), a **per-probe** argument
+  rather than a property of the problem; the reverse probes differentiate `omega(q)`. Pass
+  `omega=None` for forward probes only.
 
 ## The one recipe behind `assemble_partial_sum`
 

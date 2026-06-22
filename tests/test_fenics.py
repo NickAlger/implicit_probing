@@ -82,7 +82,7 @@ def _build_problem():
     vR = ufl.TestFunction(V_u)
     R_form = (ufl.exp(theta0) * ufl.dot(ufl.grad(u0), ufl.grad(vR)) * ufl.dx
               + u0 ** 3 * vR * ufl.dx - f * vR * ufl.dx)
-    problem = FenicsImplicitProblem(R_form, Q, theta0, u0, omega, bcs=[bc_homog])
+    problem = FenicsImplicitProblem(R_form, Q, theta0, u0, bcs=[bc_homog])
 
     return dict(problem=problem, q_of=q_of, theta0=theta0, V_theta=V_theta, omega=omega)
 
@@ -141,7 +141,7 @@ class TestFenicsProbes(unittest.TestCase):
         prob, omega = self.ctx["problem"], self.ctx["omega"]
         dirs = {1: self.d1, 2: self.d2}
         alpha = Multiset([1, 1, 2])
-        forward, reverse = probe(prob, alpha, dirs)
+        forward, reverse = probe(prob, alpha, dirs, omega)
         om = omega.x.array
         for beta in subset_lattice(alpha):
             for j, dvec in dirs.items():

@@ -39,7 +39,13 @@ __all__ = [
 
 
 class _OmegaFunctional:
-    """Sentinel marking that a term's output is paired with the problem's own output functional omega."""
+    """Sentinel marking that a term's output is paired with the output functional omega.
+
+    The driver keeps this sentinel in a term's ``pairing`` -- rather than substituting the concrete
+    ``omega`` vector -- so that a problem (e.g. a composed problem) can tell an output-functional
+    pairing apart from an incremental-adjoint vector and treat them differently. The actual ``omega``
+    is supplied to ``assemble_partial_sum`` separately.
+    """
     def __repr__(self) -> str:
         return 'OMEGA'
 
@@ -70,9 +76,10 @@ class PartialTerm:
 class ImplicitProblem(typ.Protocol):
     """What the probing driver requires of a problem. Every physics vector is opaque to the driver.
 
-    The problem owns the expansion point ``(theta0, u0)``, the operator ``A = d_u R`` there, and the
-    output functional ``omega``; it is responsible for its own setup (e.g. the state solve) before the
-    driver's first call.
+    The problem owns the expansion point ``(theta0, u0)`` and the operator ``A = d_u R`` there, and is
+    responsible for its own setup (e.g. the state solve) before the driver's first call. The output
+    functional ``omega`` is NOT a property of the problem -- it is a per-probe choice of quantity of
+    interest, supplied to ``probe`` and passed through to ``assemble_partial_sum``.
     """
 
     def solve_operator(self, b: typ.Any) -> typ.Any:
@@ -81,8 +88,12 @@ class ImplicitProblem(typ.Protocol):
     def solve_operator_adjoint(self, c: typ.Any) -> typ.Any:
         """Solve the adjoint system ``A* x = c`` for ``x``."""
 
-    def assemble_partial_sum(self, terms: typ.Sequence[PartialTerm]) -> typ.Any:
-        """Assemble and return ``sum_i terms[i]`` as one vector (in the space the terms determine)."""
+    def assemble_partial_sum(self, terms: typ.Sequence[PartialTerm], omega: typ.Any) -> typ.Any:
+        """Assemble ``sum_i terms[i]`` as one vector, resolving ``OMEGA`` pairings to ``omega``.
+
+        ``omega`` is the output functional (a covector in the output space); it is used only by terms
+        whose ``pairing`` is the ``OMEGA`` sentinel (forward and residual terms ignore it).
+        """
 
 
 def _resolve_pairing(symbolic_pairing, v_hat):
@@ -118,8 +129,9 @@ def probe(
         problem:           ImplicitProblem,
         alpha:             Multiset,            # multiset of probing-direction LABELS
         direction_vectors: typ.Mapping,         # label -> the actual theta-direction vector (opaque)
+        omega:             typ.Any = None,      # output functional; None -> forward probes only
 ) -> typ.Tuple[typ.Dict[Multiset, typ.Any], typ.Dict[Multiset, typ.Any]]:
-    """Algorithm 2: all forward and reverse probes on the lattice of sub-multisets of ``alpha``.
+    """Algorithm 2: forward (and, if ``omega`` is given, reverse) probes over the sub-multisets of ``alpha``.
 
     Returns ``(forward, reverse)``, each a dict over every ``beta <= alpha``:
 
@@ -127,33 +139,40 @@ def probe(
       vector. ``forward[empty]`` is ``q(theta0)`` itself.
     - ``reverse[beta]`` = ``omega(D^{|beta|+1} q(theta0))`` applied to ``beta``'s directions with one
       slot left open -- a parameter-space covector (so it gives the sensitivity to *every* open
-      direction from a single adjoint solve). ``reverse[empty]`` is the gradient ``g``.
+      direction from a single adjoint solve). ``reverse[empty]`` is the gradient of ``omega(q)``.
+
+    ``omega`` is the output functional: a single covector in the output space, a per-probe choice of
+    quantity of interest, NOT a property of the problem. If ``omega is None``, only forward probes are
+    computed (the adjoint solves and the reverse pass are skipped) and ``reverse`` is empty.
     """
+    reverse_wanted = omega is not None
     # Symbolic expansions for every node (Algorithm 1), once. The reverse seed serves both the adjoint
     # residual R^adj (-> the c_beta right-hand sides) and the gradient g (-> the reverse probes).
     expansions_R = differentiate_over_lattice(seed_residual_r(), alpha)
-    expansions_reverse = differentiate_over_lattice(seed_reverse(), alpha)
     expansions_q = differentiate_over_lattice(seed_forward_q(), alpha)
+    expansions_reverse = differentiate_over_lattice(seed_reverse(), alpha) if reverse_wanted else None
 
     u_hat: typ.Dict[Multiset, typ.Any] = {}  # nonempty beta -> incremental state (uhat_empty = u0 is never referenced)
     v_hat: typ.Dict[Multiset, typ.Any] = {}  # every beta -> incremental adjoint (vhat_empty = v, the base adjoint)
 
-    # Traverse the lattice by nondecreasing cardinality, solving the two incremental systems per node.
+    # Traverse the lattice by nondecreasing cardinality, solving the incremental system(s) per node.
     for beta in subset_lattice(alpha):
         if len(beta) > 0:  # the base state uhat_empty = u0 is the problem's own state solve, not a system here
             b_terms = _lower(extract_state_rhs(expansions_R[beta], beta),
                              direction_vectors, u_hat, None, open_slot=None, sign=-1)
-            u_hat[beta] = problem.solve_operator(problem.assemble_partial_sum(b_terms))
-        c_terms = _lower(extract_adjoint_rhs(expansions_reverse[beta], beta),
-                         direction_vectors, u_hat, v_hat, open_slot='u', sign=-1)
-        v_hat[beta] = problem.solve_operator_adjoint(problem.assemble_partial_sum(c_terms))
+            u_hat[beta] = problem.solve_operator(problem.assemble_partial_sum(b_terms, omega))
+        if reverse_wanted:
+            c_terms = _lower(extract_adjoint_rhs(expansions_reverse[beta], beta),
+                             direction_vectors, u_hat, v_hat, open_slot='u', sign=-1)
+            v_hat[beta] = problem.solve_operator_adjoint(problem.assemble_partial_sum(c_terms, omega))
 
-    # Assemble every forward and reverse probe (all incremental solves are now available).
+    # Assemble every forward probe (and reverse probe, if omega was given).
     forward: typ.Dict[Multiset, typ.Any] = {}
     reverse: typ.Dict[Multiset, typ.Any] = {}
     for beta in subset_lattice(alpha):
         forward[beta] = problem.assemble_partial_sum(
-            _lower(expansions_q[beta], direction_vectors, u_hat, None, open_slot=None, sign=1))
-        reverse[beta] = problem.assemble_partial_sum(
-            _lower(expansions_reverse[beta], direction_vectors, u_hat, v_hat, open_slot='theta', sign=1))
+            _lower(expansions_q[beta], direction_vectors, u_hat, None, open_slot=None, sign=1), omega)
+        if reverse_wanted:
+            reverse[beta] = problem.assemble_partial_sum(
+                _lower(expansions_reverse[beta], direction_vectors, u_hat, v_hat, open_slot='theta', sign=1), omega)
     return forward, reverse

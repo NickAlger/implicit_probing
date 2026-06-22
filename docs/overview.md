@@ -62,8 +62,9 @@ problem = make_toy_problem()        # q(theta) = Q(theta, u(theta)), R(theta, u)
 # Probe directions are given as a multiset of *labels*, plus the vector each label stands for.
 alpha = Multiset([1, 1, 2])         # probe the 3rd derivative in directions (d1, d1, d2)
 directions = {1: np.array([1.0, 0.3]), 2: np.array([0.4, -0.6])}
+omega = np.array([1.0, 0.0])        # output functional (the QoI) the reverse probes differentiate
 
-forward, reverse = probe(problem, alpha, directions)
+forward, reverse = probe(problem, alpha, directions, omega)
 
 forward[alpha]               # D^3 q(theta0) applied to (d1, d1, d2)   -> output vector in R^2
 reverse[alpha]               # omega(D^4 q(theta0)(d1, d1, d2, .))     -> covector in R^2 (parameter space)
@@ -82,6 +83,10 @@ A single `probe(alpha, ...)` call returns the forward and reverse probe for **ev
 The probes are exact (up to the cost of the linear solves); the toy ships with a finite-difference
 ground truth (`forward_probe_by_finite_difference`) used to verify them.
 
+`omega` is the output functional — a single covector in the output space and a per-probe choice of
+quantity of interest, not a property of the problem. It is needed only for the reverse probes; pass
+`omega=None` (the default) to compute forward probes alone and skip the adjoint solves.
+
 ## Using it on your own problem
 
 `probe` is generic. To run it on your model, pass an object implementing the
@@ -89,9 +94,9 @@ ground truth (`forward_probe_by_finite_difference`) used to verify them.
 
 ```python
 class ImplicitProblem(Protocol):
-    def solve_operator(self, b):            ...  # solve A x = b      (A = d_u R at the expansion point)
-    def solve_operator_adjoint(self, c):    ...  # solve A* x = c
-    def assemble_partial_sum(self, terms):  ...  # assemble and return sum_i terms[i]
+    def solve_operator(self, b):                   ...  # solve A x = b   (A = d_u R at the expansion point)
+    def solve_operator_adjoint(self, c):           ...  # solve A* x = c
+    def assemble_partial_sum(self, terms, omega):  ...  # assemble sum_i terms[i]; resolve OMEGA pairings to omega
 ```
 
 Two things to know:

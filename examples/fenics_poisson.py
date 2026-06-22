@@ -101,14 +101,15 @@ theta0.interpolate(lambda xx: 0.3 * np.sin(np.pi * xx[0]) * np.cos(np.pi * xx[1]
 u0 = solve_state(theta0)
 print(f"state solved at theta0  (u0 range [{u0.x.array.min():+.3f}, {u0.x.array.max():+.3f}])")
 
-# observation functional omega (a smooth top-trace weight) -> QoI omega(q) = int_top sin(pi x) u ds
+# observation functional omega (a smooth top-trace weight) -> QoI omega(q) = int_top sin(pi x) u ds.
+# It is a per-probe choice, passed to probe(...) below, not stored on the problem.
 omega = fem.Function(V_q)
 omega.interpolate(lambda xx: np.sin(np.pi * xx[0]))
 
 problem = FenicsImplicitProblem(
     residual(theta0, u0, ufl.TestFunction(V_u)),       # R_form, frozen at (theta0, u0)
     u0 * v_Q * ds(TOP),                                # Q_form (observation)
-    theta0, u0, omega, bcs=[bc_homog])
+    theta0, u0, bcs=[bc_homog])
 
 # --- smooth probing directions (NOT random dof vectors -- keeps the FD ground truth clean) ---
 directions = {
@@ -142,7 +143,7 @@ def forward_probe_fd(direction_orders, h=2e-3):
 
 # --- probe, and validate every sub-probe ---
 alpha = Multiset([1, 1, 2])     # exercises orders 1-3: symmetric {1,1}, asymmetric {1,2}, mixed {1,1,2}
-forward, reverse = probe(problem, alpha, dir_funcs)
+forward, reverse = probe(problem, alpha, dir_funcs, omega)
 
 print(f"\nprobe(alpha={{1,1,2}}) returned forward + reverse for all {len(subset_lattice(alpha))} sub-probes")
 print("\nForward probes vs finite differences:")

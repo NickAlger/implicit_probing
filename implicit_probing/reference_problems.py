@@ -12,9 +12,12 @@ asks of a problem:
 - ``partial_R`` / ``partial_Q``    -> directional mixed partials ``d_theta^a d_u^b R`` and
   ``d_theta^a d_u^b Q``, contracted against given theta-direction vectors and incremental-state
   vectors (the workhorse the driver composes into probes);
-- ``omega``                        -> an output functional;
 - ``q(theta)``                     -> the end-to-end map ``q = Q(theta, u(theta))``, used to build an
   *independent* finite-difference ground truth for the probes.
+
+The output functional ``omega`` is NOT held by the problem -- it is a per-probe argument to ``probe``
+(and to ``assemble_partial_sum``), since it is a choice of quantity of interest, not a property of the
+map.
 
 Everything here is polynomial, so the partials are exact at all orders (and vanish above the total
 degree). A scalar polynomial is stored in the symmetric Taylor-coefficient form
@@ -179,21 +182,19 @@ class ImplicitPolynomialProblem:
             p:      int,                     # parameter (theta) dimension
             n_u:    int,                     # state (u) dimension
             n_q:    int,                     # output (q) dimension
-            omega:  NDArray,                 # shape (n_q,); output functional (a covector)
     ):
         if R.in_dim != p + n_u or R.out_dim != n_u:
             raise ValueError(f'R must map R^{p + n_u} -> R^{n_u}, got R^{R.in_dim} -> R^{R.out_dim}')
         if Q.in_dim != p + n_u or Q.out_dim != n_q:
             raise ValueError(f'Q must map R^{p + n_u} -> R^{n_q}, got R^{Q.in_dim} -> R^{Q.out_dim}')
-        if theta0.shape != (p,) or omega.shape != (n_q,):
-            raise ValueError('theta0 must have shape (p,) and omega shape (n_q,)')
+        if theta0.shape != (p,):
+            raise ValueError('theta0 must have shape (p,)')
         self.R = R
         self.Q = Q
         self.theta0 = np.asarray(theta0, dtype=float)
         self.p = p
         self.n_u = n_u
         self.n_q = n_q
-        self.omega = np.asarray(omega, dtype=float)
         self._u0: typ.Optional[NDArray] = None
 
     # --- stacking and lifting between (theta, u) and the polynomial's variable w ---
@@ -284,6 +285,7 @@ class ImplicitPolynomialProblem:
     def assemble_partial_sum(
             self,
             terms: typ.Sequence[PartialTerm],
+            omega: typ.Optional[NDArray],        # (n_q,) output functional; resolves OMEGA pairings
     ) -> NDArray:                                # -> the assembled sum (shape depends on the terms)
         """Assemble ``sum_i terms[i]`` for the polynomial problem (one numpy contraction per term).
 
@@ -299,7 +301,7 @@ class ImplicitPolynomialProblem:
             else:
                 G = F.derivative_open_slot(self.w0, dirs)                          # (out_dim, in_dim)
                 block = G[:, :self.p] if t.open_slot == 'theta' else G[:, self.p:]  # (out_dim, slot_dim)
-                pairing = self.omega if t.pairing is OMEGA else t.pairing          # (out_dim,) covector
+                pairing = omega if t.pairing is OMEGA else t.pairing               # (out_dim,) covector
                 contribution = t.coefficient * (pairing @ block)                   # (slot_dim,)
             result = contribution if result is None else result + contribution
         return result
@@ -340,7 +342,6 @@ def make_toy_problem(
     return ImplicitPolynomialProblem(
         R=Polynomial(R_coeffs), Q=Polynomial(Q_coeffs),
         theta0=np.zeros(p), p=p, n_u=n_u, n_q=n_q,
-        omega=rng.standard_normal((n_q,)),
     )
 
 

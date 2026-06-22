@@ -61,10 +61,11 @@ class TestProbeStructure(unittest.TestCase):
     def setUp(self):
         self.prob = make_toy_problem(seed=0)
         self.dirs = {1: np.array([1.0, 0.3]), 2: np.array([0.4, -0.6])}
+        self.omega = np.array([0.7, -0.4])
 
     def test_returns_probe_for_every_subset_with_right_shapes(self):
         alpha = ms(1, 1, 2)
-        forward, reverse = probe(self.prob, alpha, self.dirs)
+        forward, reverse = probe(self.prob, alpha, self.dirs, self.omega)
         self.assertEqual(set(forward), set(subset_lattice(alpha)))
         self.assertEqual(set(reverse), set(subset_lattice(alpha)))
         for beta in subset_lattice(alpha):
@@ -86,6 +87,7 @@ class TestProbeAgainstFiniteDifference(unittest.TestCase):
             2: np.array([0.4, -0.6]),
             3: np.array([-0.2, 0.9]),
         }
+        self.omega = np.array([0.7, -0.4])
 
     def test_forward_probes_all_symmetries(self):
         cases = {
@@ -111,10 +113,10 @@ class TestProbeAgainstFiniteDifference(unittest.TestCase):
         d_open = np.array([0.5, -0.8])
         for alpha in [ms(1), ms(1, 1), ms(1, 2)]:
             with self.subTest(alpha=alpha):
-                _, reverse = probe(self.prob, alpha, self.dirs)
+                _, reverse = probe(self.prob, alpha, self.dirs, self.omega)
                 for beta in subset_lattice(alpha):
                     augmented = spec_of(beta, self.dirs) + [(d_open, 1)]
-                    rhs = self.prob.omega @ forward_probe_by_finite_difference(self.prob, augmented, h=1e-2)
+                    rhs = self.omega @ forward_probe_by_finite_difference(self.prob, augmented, h=1e-2)
                     lhs = reverse[beta] @ d_open
                     np.testing.assert_allclose(lhs, rhs, atol=1e-5)
 

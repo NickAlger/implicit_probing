@@ -133,7 +133,7 @@ class TestImplicitProblem(unittest.TestCase):
         R = Polynomial([rng.standard_normal((3,)), rng.standard_normal((3, 5))])
         Q = Polynomial([rng.standard_normal((2,)), rng.standard_normal((2, 5))])
         with self.assertRaises(ValueError):  # n_u mismatch
-            ImplicitPolynomialProblem(R, Q, np.zeros(2), p=2, n_u=4, n_q=2, omega=np.zeros(2))
+            ImplicitPolynomialProblem(R, Q, np.zeros(2), p=2, n_u=4, n_q=2)
 
 
 def _make_constant_state_problem(p, n_u, n_q, seed):
@@ -146,7 +146,7 @@ def _make_constant_state_problem(p, n_u, n_q, seed):
     Q_coeffs = [0.5 * rng.standard_normal((n_q,))]
     Q_coeffs += [_random_symmetric(n_q, n, m, rng, 0.4) for m in range(1, 4)]
     Q = Polynomial(Q_coeffs)
-    return ImplicitPolynomialProblem(R, Q, np.zeros(p), p, n_u, n_q, rng.standard_normal(n_q))
+    return ImplicitPolynomialProblem(R, Q, np.zeros(p), p, n_u, n_q)
 
 
 class TestForwardProbeGroundTruth(unittest.TestCase):
