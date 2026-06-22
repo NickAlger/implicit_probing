@@ -57,8 +57,12 @@ Python, no numpy.
   `solve_operator_adjoint` / `assemble_partial_sum`), a reference implementation of the interface.
 - Tests `tests/test_driver.py` — extraction unit tests, probe structure, and the driver's
   probes vs the FD ground truth across symmetric / partially-symmetric / fully-asymmetric probes
-  (orders 1-3, ~1e-9 agreement), reverse-probe identity `psi_beta . d = omega(D^{|beta|+1} q)`, and
-  the order-4 vanishing-top-partial edge case.
+  (orders 1-3, ~1e-9 agreement), reverse-probe identity `psi_beta . d = omega(D^{|beta|+1} q)`, the
+  order-4 vanishing-top-partial edge case, the `PartialTerm` multiplicity representation, and
+  **`TestSolveCounts`** — wraps the toy in a counting problem and asserts the *minimal* solve count
+  (`prod(p_k+1) - 1` forward, `prod(p_k+1)` adjoint) over total/partial/no repetition. Efficiency, not
+  just numerical correctness, is tested: a correct-but-wasteful traversal would pass every value check
+  but fail this one.
 
 Full suite green: **53 tests + 29 subtests, ~0.5s**. Run:
 `PYTHONPATH=$PWD <env-python> -m pytest tests/ -q`.
@@ -123,7 +127,7 @@ observation test function CG1) to catch space-conflation bugs.
   a one-call `validation` cross-check. Verified by running both examples in the `fenicsx` env.
 - `tests/test_validation.py` (new) covers the helpers on the toy, incl. a custom `perturb` hook path.
   FEniCS tests call `validation` instead of re-pasting stencils. Full suite green in both envs
-  (`t3toolbox`: 65 passed / 2 skipped; `fenicsx`: 70 passed, nothing skipped).
+  (`t3toolbox`: 67 passed / 2 skipped; `fenicsx`: 72 passed, nothing skipped).
 
 ## Design decisions locked
 

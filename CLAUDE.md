@@ -121,6 +121,12 @@ Mirror T3Toolbox's conventions:
   and the numeric probes (Algorithm 2) vs an independent finite-difference ground truth
   (`implicit_probing.validation`, vector-agnostic; `reference_problems.forward_probe_by_finite_difference`
   is the numpy convenience wrapper), swept over symmetric / partial / asymmetric probes.
+- **Solve-count (efficiency) is a first-class test, not just numerical correctness**: the lattice
+  algebra exists to minimize linearized solves, and a correct-but-wasteful traversal would pass every
+  value check. `tests/test_driver.py::TestSolveCounts` wraps the toy in a counting problem and asserts
+  the driver performs *exactly* `prod(p_k+1) - 1` forward and `prod(p_k+1)` adjoint solves (the empty
+  node is the user's nonlinear base solve; the base adjoint is a real solve), swept over total / partial
+  / no repetition. Count at the `solve_operator` boundary (what the driver asks for), not `solve_A`.
 - `unittest` in `tests/` (flat, mirroring the flat package). Pattern: `subTest` over cases.
 - **Run** with the maintainer's env Python and `PYTHONPATH=$PWD`:
   `PYTHONPATH=$PWD <env-python> -m pytest tests/ -q`. (The env path is maintainer-local; see

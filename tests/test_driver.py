@@ -2,6 +2,7 @@
 # Copyright: MIT License (2026)
 # Github: https://github.com/NickAlger/implicit_probing
 import itertools
+import math
 import unittest
 
 import numpy as np
@@ -186,6 +187,74 @@ class TestPartialTermRepresentation(unittest.TestCase):
         max_u = max((m for t in self.rec.terms for _, m in t.u_vecs), default=0)
         self.assertGreaterEqual(max_theta, 2)
         self.assertGreaterEqual(max_u, 2)
+
+
+class _CountingProblem:
+    """Wraps an ImplicitProblem, counting the linearized solves the driver performs.
+
+    Counts at the ``solve_operator`` / ``solve_operator_adjoint`` boundary -- i.e. exactly the systems
+    the *driver* asks for. The problem's own nonlinear base solve (``solve_state`` for u0) does not go
+    through these methods, so it is correctly excluded.
+    """
+    def __init__(self, inner):
+        self.inner = inner
+        self.n_forward = 0
+        self.n_adjoint = 0
+
+    def solve_operator(self, b):
+        self.n_forward += 1
+        return self.inner.solve_operator(b)
+
+    def solve_operator_adjoint(self, c):
+        self.n_adjoint += 1
+        return self.inner.solve_operator_adjoint(c)
+
+    def assemble_partial_sum(self, terms, omega):
+        return self.inner.assemble_partial_sum(terms, omega)
+
+
+class TestSolveCounts(unittest.TestCase):
+    """The lattice traversal must perform the MINIMAL number of solves -- the whole point of the
+    lattice algebra. For powers ``(p_0, ..., p_{n-1})`` the sub-probe lattice has ``L = prod(p_k + 1)``
+    nodes, so a correct, non-wasteful driver does exactly:
+
+    - ``L - 1`` forward solves (one incremental state per *non-empty* node; the empty node is the user's
+      already-done nonlinear base solve, not a linearized system), and
+    - ``L`` adjoint solves when ``omega`` is given (one incremental adjoint per node, *including* the
+      empty node -- the base adjoint ``A* v = c_empty`` is a real linearized solve).
+
+    A correct-but-wasteful implementation (e.g. traversing a bigger lattice than necessary) would still
+    produce the right probes but blow up the solve count, which only this test would catch.
+    """
+    @staticmethod
+    def _directions(powers):
+        # one distinct R^2 direction vector per axis (they need not be independent), with the given powers
+        rng = np.random.default_rng(0)
+        return [(rng.standard_normal(2), p) for p in powers]
+
+    def test_forward_and_adjoint_solve_counts(self):
+        cases = {
+            'total repetition   a^4':       (4,),
+            'partial repetition  a^2 b c':  (2, 1, 1),
+            'no repetition       a b c d':  (1, 1, 1, 1),
+            'mixed               a^3 b c^2': (3, 1, 2),
+        }
+        omega = np.array([0.7, -0.4])
+        for name, powers in cases.items():
+            with self.subTest(case=name):
+                problem = _CountingProblem(make_toy_problem(seed=0))
+                probe(problem, self._directions(powers), omega)
+                L = math.prod(p + 1 for p in powers)
+                self.assertEqual(problem.n_forward, L - 1)   # non-empty nodes only (empty = nonlinear base)
+                self.assertEqual(problem.n_adjoint, L)       # every node, incl. the base adjoint
+
+    def test_no_adjoint_solves_when_omega_is_none(self):
+        powers = (2, 1, 1)
+        problem = _CountingProblem(make_toy_problem(seed=0))
+        probe(problem, self._directions(powers))             # omega=None -> forward probes only
+        L = math.prod(p + 1 for p in powers)
+        self.assertEqual(problem.n_forward, L - 1)
+        self.assertEqual(problem.n_adjoint, 0)               # reverse pass skipped entirely
 
 
 if __name__ == '__main__':
