@@ -68,7 +68,7 @@ run-verified.
 ## Design decisions locked
 
 - Package / repo / import name: `implicit_probing` (GitHub renamed; local `origin` updated; local
-  directory still `ImplicitHigherDerivatives`).
+  directory renamed to `implicit_probing` to match — repo, import package, and folder now all agree).
 - Pure functional backend now; thin OO frontend later.
 - Deps: `numpy` required (for slice 2+), `jax` an optional extra; **no T3Toolbox dependency**.
 - `theta_0` will be a first-class input (multi-point gathering = trivial outer loop), for the
