@@ -68,14 +68,27 @@ A sum of terms is a `dict[Term, int]` (term -> integer coefficient). The four pr
 applied to three seeds (`g` and `R^adj` share one seed, differing only at numeric assembly). The
 single-direction rule is t4s.pdf eqs (19)-(20); the lattice traversal is Algorithm 1.
 
+### The driver and problem interface (Algorithm 2)
+
+`backend/driver.py` is the numeric driver: `probe(problem, alpha, direction_vectors)` walks the
+lattice and returns `(forward, reverse)` probes for every `beta <= alpha` (forward -> output vector;
+reverse -> parameter covector). It is **vector-type agnostic** — it does no arithmetic on physics
+vectors, only lowering symbolic terms to `PartialTerm` requests, handing whole sums to the problem,
+and routing the opaque results. A problem implements the 3-method `ImplicitProblem` protocol:
+`solve_operator` (`A x = b`), `solve_operator_adjoint` (`A* x = c`), and `assemble_partial_sum`
+(assemble a *whole sum* of partial-derivative terms — requesting sums, not singletons, lets a backend
+like FEniCS assemble one combined form). `reference_problems.py` (top-level, numpy) holds the toy
+implicit map + the exact-derivative `Polynomial` + a finite-difference ground truth;
+`ImplicitPolynomialProblem` is the reference implementation of the interface.
+
 ## Code style
 
 Mirror T3Toolbox's conventions:
 
 - **Signature shape-comment style** for array code: the trailing `# shape` comment is the type the
-  language can't express (one arg per line, name/type/`#`-comment aligned). The array-heavy numeric
-  driver (slice 2+) follows this; the symbolic engine is non-array code, so shape comments mostly
-  don't apply there.
+  language can't express (one arg per line, name/type/`#`-comment aligned). The array-heavy code
+  (`reference_problems.py`, future hooks) follows this; the symbolic engine and the vector-agnostic
+  driver are non-array code, so shape comments mostly don't apply there.
 - File header block: `# Authors / # Copyright / # Github`.
 - One `__all__` per backend module.
 - Cite the t4s.pdf equation/algorithm number in the docstring when code implements one.
@@ -84,8 +97,10 @@ Mirror T3Toolbox's conventions:
 
 ## Verification & testing
 
-- Correctness against **ground truth**: the symbolic engine vs the paper's hand-derived expansions;
-  later, the numeric probes vs finite differences / AD.
+- Correctness against **ground truth**: the symbolic engine vs the paper's hand-derived expansions,
+  and the numeric probes (Algorithm 2) vs an independent finite-difference ground truth
+  (`reference_problems.forward_probe_by_finite_difference`), swept over symmetric / partial /
+  asymmetric probes.
 - `unittest` in `tests/` (mirrors the package as `tests/backend/`). Pattern: `subTest` over cases.
 - **Run** with the maintainer's env Python and `PYTHONPATH=$PWD`:
   `PYTHONPATH=$PWD <env-python> -m pytest tests/ -q`. (The env path is maintainer-local; see
@@ -93,14 +108,17 @@ Mirror T3Toolbox's conventions:
 
 ## Knowledge routing
 
-- User-facing design rationale -> `docs/` (Sphinx, added later). Internal status/handoff ->
-  `dev/HANDOFF.md` (read it for where-we-are + next steps).
+- User-facing docs -> `docs/` (`docs/overview.md` is the user-facing tour; Sphinx later). Internal
+  status/handoff -> `dev/HANDOFF.md` (read it for where-we-are + next steps).
 - **Essential/Dirichlet BCs** — a constraint for the *future* autodiff-hook layer, NOT the symbolic
   engine: the state equation enforces the real BCs, but the adjoint and ALL incremental equations
   enforce **homogenized** (zeroed-BC-dof) versions. (Also kept in maintainer memory.)
 
 ## Current state
 
-**Slice 1 done: the symbolic engine (Algorithm 1)** — `backend/multiset.py` + `backend/symbolic.py` +
-tests, all green. Next: RHS extraction (isolate `A uhat_beta`), the problem interface, and the numeric
-driver (Algorithm 2). See `dev/HANDOFF.md`.
+**Algorithms 1 & 2 are implemented and validated — the method runs end-to-end.** The symbolic engine
+(`backend/multiset.py`, `backend/symbolic.py`) and the numeric driver (`backend/driver.py`) are done;
+the toy reference problem + finite-difference ground truth (`reference_problems.py`) validate the
+driver's probes across symmetric / partial / asymmetric symmetries (~1e-9). User-facing tour in
+`docs/overview.md`. Full suite green (`pytest tests/ -q`). No core algorithm work remains; next
+candidates are FEniCS/JAX problem hooks, the thin OO frontend, and examples. See `dev/HANDOFF.md`.

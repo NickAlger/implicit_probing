@@ -60,6 +60,11 @@ Python, no numpy.
 Full suite green: **53 tests + 29 subtests, ~0.5s**. Run:
 `PYTHONPATH=$PWD <env-python> -m pytest tests/ -q`.
 
+**User-facing docs.** `docs/overview.md` — a short tour: the idea (probe huge, implicit derivative
+tensors via shared-operator solves), the module map, and how to use `probe(...)` + implement the
+`ImplicitProblem` interface (`ImplicitPolynomialProblem` is the template). Example snippets are
+run-verified.
+
 ## Design decisions locked
 
 - Package / repo / import name: `implicit_probing` (GitHub renamed; local `origin` updated; local
@@ -80,8 +85,9 @@ differences. Candidate next slices (maintainer to choose):
    install only what they use.
 2. **Thin OO frontend.** Now that the functional backend works, add the light OO layer (e.g. an
    `ImplicitProblem` base/adapters + a top-level `probe(...)` entry point) per the original plan.
-3. **Examples + docs.** A worked example script (toy problem -> probes), and fold the design
-   rationale into `docs/` (the math map, the assembly/interface contract).
+3. **Examples + more docs.** `docs/overview.md` exists (the user-facing tour); still to do: a worked
+   example *script* (toy -> probes) and deeper `docs/` (the math map, the assembly/interface
+   contract; Sphinx).
 4. **Probe-to-tensor bridge (optional).** Package the forward/reverse probes into whatever a
    downstream consumer (e.g. T3Toolbox fitting) expects — kept out of this repo unless wanted.
 
@@ -102,5 +108,7 @@ differences. Candidate next slices (maintainer to choose):
   incremental eqs -> homogenized (zeroed-BC-dof). See maintainer memory `dirichlet-bc-handling`.
 - Autodiff hooks (FEniCS `dl.derivative()`, JAX, and later others) should be **optional extras** — a
   user installs only the frameworks they actually use.
-- Git: local branch is still `master`; GitHub default is likely `main` — reconcile before/at first
-  push. Nothing committed yet (awaiting maintainer go-ahead).
+- Git: branch `main`, tracking `origin/main`; all slices committed and pushed (Algorithm 1, the toy
+  reference problem, Algorithm 2, and `docs/overview.md`). Commits are authored by Nick with a
+  `Co-Authored-By: Claude ...` trailer — Blake is a package author (LICENSE/pyproject/headers) but
+  not on commit trailers while he is not at the keyboard.
