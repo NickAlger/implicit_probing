@@ -14,10 +14,11 @@ observation is the weak trace of ``u`` on the top edge, ``Q(u; v) = int_top u v 
 the observation-space dofs, zero off the top). We probe the derivatives ``D^j q(theta0)`` of the
 parameter-to-observation map ``q(theta) = Q(u(theta))``.
 
-This demonstrates the whole pipeline: build the PDE, do the (user's own) nonlinear solve, hand the
-frozen ``(theta, u)`` to ``FenicsImplicitProblem``, and call ``probe``. It then validates the probes:
-forward probes against finite differences (re-solving the PDE), and reverse probes against
-omega-paired forward probes (exact discrete adjointness).
+The file is in three labelled parts so you can see at a glance what is what: **PDE SETUP** (plain
+FEniCS, nothing to do with this library), **PROBING** (the few lines that actually use
+implicit_probing), and **RESULTS**. A short verification block at the end cross-checks the probes
+against finite differences -- that is for confidence only; finite differences are slower and only
+approximate, whereas the probes are exact.
 
 Deliberately uses three different spaces -- theta in CG2, u in CG3, the observation test function in
 CG1 -- so any accidental conflation of the parameter, state, and observation spaces would fail loudly.
@@ -26,8 +27,6 @@ Run (in a conda DOLFINx environment with implicit_probing installed):
 
     python examples/fenics_poisson.py
 """
-import itertools
-
 import numpy as np
 import ufl
 from mpi4py import MPI
@@ -36,9 +35,15 @@ from dolfinx import mesh, fem
 import dolfinx.fem.petsc as petsc_fem
 
 from implicit_probing import Multiset, subset_lattice, probe
+from implicit_probing import validation                    # finite-difference cross-check (testing only)
 from implicit_probing.fenics import FenicsImplicitProblem
 
 comm = MPI.COMM_WORLD
+
+
+# ====================================================================================================
+# PDE SETUP (FEniCS)  --  this defines the map q(theta); it has nothing to do with implicit_probing
+# ====================================================================================================
 
 # --- mesh and the three (deliberately different) function spaces ---
 msh = mesh.create_unit_square(comm, 24, 24)
@@ -94,88 +99,92 @@ def observe(theta_func):
     return qv.array.copy()
 
 
-# --- the frozen expansion point (theta0, u0) ---
+# the frozen expansion point (theta0, u0): the user does this nonlinear solve once, themselves
 theta0 = fem.Function(V_theta)
 theta0.interpolate(lambda xx: 0.3 * np.sin(np.pi * xx[0]) * np.cos(np.pi * xx[1]))
 u0 = solve_state(theta0)
 print(f"state solved at theta0  (u0 range [{u0.x.array.min():+.3f}, {u0.x.array.max():+.3f}])")
 
-# observation functional omega (a smooth top-trace weight) -> QoI omega(q) = int_top sin(pi x) u ds.
-# It is a per-probe choice, passed to probe(...) below, not stored on the problem.
-omega = fem.Function(V_q)
-omega.interpolate(lambda xx: np.sin(np.pi * xx[0]))
 
+# ====================================================================================================
+# PROBING (implicit_probing)  --  the whole point of the example
+# ====================================================================================================
+# Freeze the problem at (theta0, u0) and hand it to the driver. Every probe below -- of every order,
+# in every direction -- is computed from *linearized* solves that all share the ONE operator A = d_u R
+# (factorized once, reused), with no further nonlinear solves and no finite-difference error: the probe
+# values are exact to solver precision. This is what makes probing strictly cheaper than, and superior
+# to, differencing the nonlinear map.
+omega = fem.Function(V_q)                                 # the QoI: a smooth top-trace weight ...
+omega.interpolate(lambda xx: np.sin(np.pi * xx[0]))       # ... so omega(q) = int_top sin(pi x) u ds
 problem = FenicsImplicitProblem(
-    residual(theta0, u0, ufl.TestFunction(V_u)),       # R_form, frozen at (theta0, u0)
-    u0 * v_Q * ds(TOP),                                # Q_form (observation)
+    residual(theta0, u0, ufl.TestFunction(V_u)),          # R_form, frozen at (theta0, u0)
+    u0 * v_Q * ds(TOP),                                   # Q_form (observation)
     theta0, u0, bcs=[bc_homog])
 
-# --- smooth probing directions (NOT random dof vectors -- keeps the FD ground truth clean) ---
+# smooth probing directions (NOT random dof vectors -- keeps the finite-difference check below clean)
 directions = {
-    1: ("sin(pi x) sin(pi y)", lambda xx: np.sin(np.pi * xx[0]) * np.sin(np.pi * xx[1])),
-    2: ("cos(pi x) sin(2pi y)", lambda xx: np.cos(np.pi * xx[0]) * np.sin(2 * np.pi * xx[1])),
-    3: ("sin(2pi x) cos(pi y)", lambda xx: np.sin(2 * np.pi * xx[0]) * np.cos(np.pi * xx[1])),
+    1: lambda xx: np.sin(np.pi * xx[0]) * np.sin(np.pi * xx[1]),
+    2: lambda xx: np.cos(np.pi * xx[0]) * np.sin(2 * np.pi * xx[1]),
+    3: lambda xx: np.sin(2 * np.pi * xx[0]) * np.cos(np.pi * xx[1]),
 }
 dir_funcs = {}
-for k, (_, fn) in directions.items():
+for k, fn in directions.items():
     d = fem.Function(V_theta); d.interpolate(fn); dir_funcs[k] = d
 
-
-# --- finite-difference ground truth for a forward probe (tensor product of central differences) ---
-_STENCILS = {1: ((-1, 1), (-0.5, 0.5)),
-             2: ((-1, 0, 1), (1.0, -2.0, 1.0)),
-             3: ((-2, -1, 1, 2), (-0.5, 1.0, -1.0, 0.5))}
-
-def forward_probe_fd(direction_orders, h=2e-3):
-    per = [(dir_funcs[k], _STENCILS[m][0], _STENCILS[m][1], m) for k, m in direction_orders]
-    total = None
-    for picks in itertools.product(*[range(len(off)) for _, off, _, _ in per]):
-        tp = fem.Function(V_theta); tp.x.array[:] = theta0.x.array
-        coeff = 1.0
-        for (d, off, wts, m), i in zip(per, picks):
-            tp.x.array[:] += off[i] * h * d.x.array
-            coeff *= wts[i] / h ** m
-        contrib = coeff * observe(tp)
-        total = contrib if total is None else total + contrib
-    return total
-
-
-# --- probe, and validate every sub-probe ---
 alpha = Multiset([1, 1, 2])     # exercises orders 1-3: symmetric {1,1}, asymmetric {1,2}, mixed {1,1,2}
 forward, reverse = probe(problem, alpha, dir_funcs, omega)
+print(f"one probe(alpha={{1,1,2}}) call returned forward + reverse for all "
+      f"{len(subset_lattice(alpha))} sub-probes (every lower order came for free)")
 
-print(f"\nprobe(alpha={{1,1,2}}) returned forward + reverse for all {len(subset_lattice(alpha))} sub-probes")
-print("\nForward probes vs finite differences:")
-print(f"  {'beta':<12}{'order':<7}{'||D^|b| q||':<14}{'rel err vs FD'}")
+
+# ====================================================================================================
+# RESULTS  --  the actually-useful outputs
+# ====================================================================================================
+print("\nforward probes  D^|beta| q(theta0)  (norm of the observation-space vector):")
 for beta in subset_lattice(alpha):
     if len(beta) == 0:
         continue
-    spec = [(k, c) for k, c in beta.items()]
-    y = forward[beta].array
-    y_fd = forward_probe_fd(spec)
-    rel = np.linalg.norm(y - y_fd) / max(np.linalg.norm(y_fd), 1e-30)
-    print(f"  {str(beta):<12}{len(beta):<7}{np.linalg.norm(y):<14.4e}{rel:.2e}")
+    print(f"  order {len(beta)}  {str(beta):<12} ||D^|b| q|| = {np.linalg.norm(forward[beta].array):.4e}")
 
-print("\nReverse probes vs omega-paired forward probes (exact discrete adjointness):")
-om = omega.x.array
-max_adj = 0.0
-for beta in subset_lattice(alpha):
-    for k, dvec in dir_funcs.items():
-        child = beta.add(k)
-        if not child.issubmultiset(alpha):
-            continue
-        lhs = float(np.dot(reverse[beta].array, dvec.x.array))
-        rhs = float(np.dot(om, forward[child].array))
-        max_adj = max(max_adj, abs(lhs - rhs) / max(abs(rhs), 1e-30))
-print(f"  max relative error  psi_beta . d_k  ==  omega . forward[beta+k]:  {max_adj:.2e}")
-
-# fully-asymmetric order-3 probe also runs (no FD here, just shown to work):
-fwd3, _ = probe(problem, Multiset([1, 2, 3]), dir_funcs)
-print(f"\nfully-asymmetric D^3 q (d1,d2,d3): ||probe|| = {np.linalg.norm(fwd3[Multiset([1, 2, 3])].array):.4e}")
-print("\nThe gradient of the QoI (reverse[empty], a field over the parameter space) has norm "
+# reverse[empty] is the gradient of the QoI omega(q) w.r.t. the whole theta field -- one adjoint solve.
+print(f"\nQoI gradient field (reverse[empty]) over the parameter space: norm "
       f"{np.linalg.norm(reverse[Multiset([])].array):.4e}")
 
-# --- optional visualization of the state and the QoI gradient (best-effort; needs pyvista + a renderer) ---
+# a fully-asymmetric order-3 probe runs just the same (distinct directions => a bigger lattice):
+fwd3, _ = probe(problem, Multiset([1, 2, 3]), dir_funcs)
+print(f"fully-asymmetric D^3 q (d1,d2,d3): ||probe|| = {np.linalg.norm(fwd3[Multiset([1, 2, 3])].array):.4e}")
+
+
+# ====================================================================================================
+# verification (testing only -- the probes above are exact; finite differences are slow + approximate,
+# and are used here purely to demonstrate that the probes are right -- see tests/ for the full sweep)
+# ====================================================================================================
+def perturb(point, scale, direction):                    # the one FEniCS-specific hook the helper needs
+    moved = fem.Function(V_theta)
+    moved.x.array[:] = point.x.array + scale * direction.x.array
+    moved.x.scatter_forward()
+    return moved
+
+print("\n(cross-check vs finite differences -- confidence only, not how you'd compute these:)")
+print(f"  {'beta':<12}{'order':<7}{'rel err vs FD'}")
+for beta in subset_lattice(alpha):
+    if len(beta) == 0:
+        continue
+    spec = [(dir_funcs[k], count) for k, count in beta.items()]
+    fd = validation.forward_probe_by_finite_difference(observe, theta0, spec, perturb=perturb, h=2e-3)
+    rel = np.linalg.norm(forward[beta].array - fd) / max(np.linalg.norm(fd), 1e-30)
+    print(f"  {str(beta):<12}{len(beta):<7}{rel:.2e}")
+
+adj = validation.reverse_forward_adjointness(
+    forward, reverse, alpha, dir_funcs, omega,
+    pair_input=lambda rev, d: rev.array @ d.x.array,      # reverse covector (PETSc Vec) . direction (Function)
+    pair_output=lambda om, fwd: om.x.array @ fwd.array)   # omega (Function) . forward output (PETSc Vec)
+print(f"  reverse/forward adjointness (exact identity) max rel err: {adj:.2e}")
+
+
+# ====================================================================================================
+# optional visualization of the state and the QoI gradient (best-effort; needs pyvista + a renderer)
+# ====================================================================================================
 try:
     from pathlib import Path
     import pyvista

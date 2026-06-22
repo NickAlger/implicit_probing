@@ -39,6 +39,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from implicit_probing.driver import OMEGA, PartialTerm
+from implicit_probing import validation
 
 __all__ = [
     'Polynomial',
@@ -349,50 +350,19 @@ def make_toy_problem(
 # Independent finite-difference ground truth for a forward probe (any probing symmetry)
 # ----------------------------------------------------------------------------------------------------
 
-# Central finite-difference stencils for the m-th derivative: (offsets, weights), error O(h^2).
-_CENTRAL_STENCILS: typ.Dict[int, typ.Tuple[typ.Tuple[int, ...], typ.Tuple[float, ...]]] = {
-    1: ((-1, 1),          (-0.5, 0.5)),
-    2: ((-1, 0, 1),       (1.0, -2.0, 1.0)),
-    3: ((-2, -1, 1, 2),   (-0.5, 1.0, -1.0, 0.5)),
-    4: ((-2, -1, 0, 1, 2),(1.0, -4.0, 6.0, -4.0, 1.0)),
-}
-
-
-def _mixed_fd(problem, direction_orders, h):
-    """One tensor-product central-difference estimate (step ``h``) of the mixed derivative."""
-    per_direction = []  # (vector, offsets, scaled_weights)
-    for d, m in direction_orders:
-        offsets, weights = _CENTRAL_STENCILS[m]
-        per_direction.append((np.asarray(d, dtype=float), offsets, [w / h ** m for w in weights]))
-    total = np.zeros(problem.n_q)
-    for picks in itertools.product(*[range(len(offsets)) for (_, offsets, _) in per_direction]):
-        theta = problem.theta0.astype(float).copy()
-        coeff = 1.0
-        for (d, offsets, weights), idx in zip(per_direction, picks):
-            theta = theta + offsets[idx] * h * d
-            coeff *= weights[idx]
-        total = total + coeff * problem.q(theta)
-    return total
-
-
 def forward_probe_by_finite_difference(
         problem:          ImplicitPolynomialProblem,
         direction_orders: typ.Sequence[typ.Tuple[NDArray, int]],  # the multiset {d_k^{m_k}}: (vector (p,), order)
         h:                float = 1e-2,
         richardson:       bool = True,
 ) -> NDArray:                                                     # -> (n_q,)
-    """Independent ground truth for the forward probe ``D^j q(theta0)`` applied to the given directions.
+    """Independent ground truth for the forward probe ``D^j q(theta0)`` at the toy's expansion point.
 
-    ``direction_orders`` lists the *distinct* probing directions with their multiplicities, so this
-    handles any symmetry: fully symmetric ``[(d, j)]``, fully asymmetric ``[(d1,1),(d2,1),(d3,1)]``,
-    and anything between, e.g. ``[(d1,2),(d2,1)]``. The probe value equals the mixed derivative
-    ``d_{s_1}^{m_1} ... d_{s_l}^{m_l} q(theta0 + sum_k s_k d_k)`` at ``s = 0``, here estimated by a
-    tensor product of central differences (Richardson-extrapolated when ``richardson`` is set). This
-    touches only ``R``, ``Q``, and the state solve — never the analytic partials — so it independently
-    validates the probing driver.
+    A thin numpy convenience over :func:`implicit_probing.validation.forward_probe_by_finite_difference`
+    (the vector-agnostic engine), fixing the parameter perturbation to plain numpy and feeding the toy's
+    end-to-end map ``q`` and expansion point ``theta0``. See that function for the central-difference /
+    Richardson details and the symmetry handling. Finite differences are a *test* of the probes -- the
+    probing driver computes them exactly and far more cheaply.
     """
-    D = _mixed_fd(problem, direction_orders, h)
-    if richardson:
-        D_half = _mixed_fd(problem, direction_orders, h / 2)
-        D = (4.0 * D_half - D) / 3.0  # cancels the leading O(h^2) error
-    return D
+    return validation.forward_probe_by_finite_difference(
+        problem.q, problem.theta0, direction_orders, h=h, richardson=richardson)

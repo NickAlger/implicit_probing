@@ -13,18 +13,17 @@ top-trace observation, a vector over *every* CG1 dof, nonzero only on the top ed
 - keep only the **boundary** entries of the observation via a linear selection ``z = W obs``.
 
 The composed map is ``f = W o q o C : x -> z`` (a handful of feature inputs to a handful of boundary
-outputs). ``ComposedProblem`` probes ``f`` directly -- because ``C`` and ``W`` are linear, the
-composed probes are just linear images of ``q``'s probes, and the PDE state solves are untouched.
+outputs). ``ComposedProblem`` probes ``f`` directly -- because ``C`` and ``W`` are linear, the composed
+probes are just linear images of ``q``'s probes, and the PDE state solves are untouched.
 
-This script builds ``C`` and ``W``, probes ``f``, and validates: forward probes against finite
-differences of the re-solved composed map, and reverse probes against the (exact) adjointness identity.
+The file is in labelled parts: the two **LINEAR MAPS** (the actual subject here), the **PDE SETUP**
+(identical to fenics_poisson.py), the **COMPOSE + PROBE** step, **RESULTS**, and a finite-difference
+verification block (testing only).
 
 Run in a conda DOLFINx environment with implicit_probing installed:
 
     python examples/fenics_composition.py
 """
-import itertools
-
 import numpy as np
 import ufl
 from mpi4py import MPI
@@ -33,14 +32,15 @@ from dolfinx import mesh, fem
 import dolfinx.fem.petsc as petsc_fem
 
 from implicit_probing import Multiset, subset_lattice, probe, ComposedProblem
+from implicit_probing import validation                    # finite-difference cross-check (testing only)
 from implicit_probing.fenics import FenicsImplicitProblem
 
 comm = MPI.COMM_WORLD
 
 
-# ----------------------------------------------------------------------------------------------------
-# Two problem-specific linear operators (each just needs apply / apply_transpose)
-# ----------------------------------------------------------------------------------------------------
+# ====================================================================================================
+# LINEAR MAPS  --  the subject of this example: each is just an apply / apply_transpose pair
+# ====================================================================================================
 
 class FeatureParameterization:
     """Input map C: feature coefficients in R^m -> a theta field, theta = sum_i x_i (feature_i in V_theta)."""
@@ -70,9 +70,9 @@ class BoundarySelection:
         return w
 
 
-# ----------------------------------------------------------------------------------------------------
-# The nonlinear-Poisson state problem (same as examples/fenics_poisson.py)
-# ----------------------------------------------------------------------------------------------------
+# ====================================================================================================
+# PDE SETUP (FEniCS)  --  the same nonlinear Poisson state problem as examples/fenics_poisson.py
+# ====================================================================================================
 
 msh = mesh.create_unit_square(comm, 24, 24)
 x = ufl.SpatialCoordinate(msh)
@@ -122,9 +122,9 @@ R_form = (ufl.exp(theta0) * ufl.dot(ufl.grad(u0), ufl.grad(vR)) * ufl.dx
 inner = FenicsImplicitProblem(R_form, u0 * v_Q * ds(TOP), theta0, u0, bcs=[bc_homog])
 
 
-# ----------------------------------------------------------------------------------------------------
-# Build the linear maps and the composed problem
-# ----------------------------------------------------------------------------------------------------
+# ====================================================================================================
+# COMPOSE + PROBE (implicit_probing)
+# ====================================================================================================
 
 # Input map C: low-order polynomial features of position, interpolated into V_theta.
 features = {
@@ -140,17 +140,12 @@ C = FeatureParameterization(P, V_theta)
 top_dofs = fem.locate_dofs_geometrical(V_q, lambda xx: np.isclose(xx[1], 1.0))
 W = BoundarySelection(top_dofs, V_q)
 
-composed = ComposedProblem(inner, input_map=C, output_map=W)
+composed = ComposedProblem(inner, input_map=C, output_map=W)    # itself an ImplicitProblem; probes nest
 
 n_features, n_obs = len(features), len(top_dofs)
 print("Composed map  f = W o q o C  :  x (features) -> z (boundary observations)")
 print(f"  input  : {n_features} polynomial features        (vs {theta0.x.array.size} theta dofs in the full field)")
 print(f"  output : {n_obs} boundary observation dofs   (vs {u0.function_space.dofmap.index_map.size_global}+ in the full domain)")
-
-
-# ----------------------------------------------------------------------------------------------------
-# Probe the composed map, and validate
-# ----------------------------------------------------------------------------------------------------
 
 # Probe directions live in feature space (R^m); omega is on the reduced output. Here omega = ones, so
 # omega(z) = sum of the boundary observations = the total top-trace integral of u (a partition of unity).
@@ -160,49 +155,40 @@ omega = np.ones(n_obs)
 
 alpha = Multiset([1, 1, 2])
 forward, reverse = probe(composed, alpha, x_directions, omega)
+# The PDE state solves are untouched by C, W -- they only reparameterize the input and re-observe the
+# output -- so probing the reduced map costs exactly what probing the raw map does.
 
 
-# finite-difference ground truth: W applied to a mixed central difference of the re-solved observation,
-# perturbing theta along the C-mapped feature directions.
-_STENCILS = {1: ((-1, 1), (-0.5, 0.5)), 2: ((-1, 0, 1), (1.0, -2.0, 1.0)),
-             3: ((-2, -1, 1, 2), (-0.5, 1.0, -1.0, 0.5))}
-def composed_forward_fd(direction_orders, h=2e-3):
-    per = [(C.apply(x_directions[k]), _STENCILS[m][0], _STENCILS[m][1], m) for k, m in direction_orders]
-    total = None
-    for picks in itertools.product(*[range(len(off)) for _, off, _, _ in per]):
-        tp = fem.Function(V_theta); tp.x.array[:] = theta0.x.array
-        coeff = 1.0
-        for (d, off, wts, m), i in zip(per, picks):
-            tp.x.array[:] += off[i] * h * d.x.array
-            coeff *= wts[i] / h ** m
-        contrib = coeff * observe(tp)
-        total = contrib if total is None else total + contrib
-    return total[top_dofs]                            # W: restrict to the boundary dofs
+# ====================================================================================================
+# RESULTS  --  the per-feature QoI gradient (directly interpretable)
+# ====================================================================================================
+# reverse[empty] is one number per feature: how each polynomial mode of the log-diffusivity affects the
+# total top-trace. A single adjoint solve gives the whole feature-space gradient.
+print("\nGradient of the QoI (total top-trace) w.r.t. each feature:")
+for name, value in zip(features, reverse[Multiset([])]):
+    print(f"  d/d[{name:<3}] = {value:+.4e}")
 
-print("\nForward probes vs finite differences (composed map):")
+
+# ====================================================================================================
+# verification (testing only -- the probes above are exact; finite differences are slow + approximate)
+# ====================================================================================================
+def perturb(point, scale, direction):                # FEniCS hook: theta perturbed along a C-mapped dir
+    moved = fem.Function(V_theta)
+    moved.x.array[:] = point.x.array + scale * direction.x.array
+    moved.x.scatter_forward()
+    return moved
+
+print("\n(cross-check vs finite differences of the re-solved composed map -- confidence only:)")
 print(f"  {'beta':<12}{'order':<7}{'rel err vs FD'}")
 for beta in subset_lattice(alpha):
     if len(beta) == 0:
         continue
-    y = forward[beta]
-    y_fd = composed_forward_fd([(k, c) for k, c in beta.items()])
-    rel = np.linalg.norm(y - y_fd) / max(np.linalg.norm(y_fd), 1e-30)
+    spec = [(C.apply(x_directions[k]), count) for k, count in beta.items()]   # directions pre-mapped by C
+    fd_full = validation.forward_probe_by_finite_difference(observe, theta0, spec, perturb=perturb, h=2e-3)
+    fd = fd_full[top_dofs]                            # W: restrict to the boundary dofs
+    rel = np.linalg.norm(forward[beta] - fd) / max(np.linalg.norm(fd), 1e-30)
     print(f"  {str(beta):<12}{len(beta):<7}{rel:.2e}")
 
-print("\nReverse probes vs omega-paired forward probes (exact discrete adjointness):")
-max_adj = 0.0
-for beta in subset_lattice(alpha):
-    for k, xvec in x_directions.items():
-        child = beta.add(k)
-        if not child.issubmultiset(alpha):
-            continue
-        lhs = float(reverse[beta] @ xvec)
-        rhs = float(omega @ forward[child])
-        max_adj = max(max_adj, abs(lhs - rhs) / max(abs(rhs), 1e-30))
-print(f"  max relative error  psi_beta . xhat_k  ==  omega . forward[beta+k]:  {max_adj:.2e}")
-
-# The gradient of the QoI w.r.t. the features (reverse[empty]) is one number per feature -- directly
-# interpretable: how each polynomial mode of the log-diffusivity affects the total top-trace.
-print("\nGradient of the QoI (total top-trace) w.r.t. each feature:")
-for name, value in zip(features, reverse[Multiset([])]):
-    print(f"  d/d[{name:<3}] = {value:+.4e}")
+# composed forward/reverse are plain numpy (W-codomain and C-domain), so the default numpy pairing works
+adj = validation.reverse_forward_adjointness(forward, reverse, alpha, x_directions, omega)
+print(f"  reverse/forward adjointness (exact identity) max rel err: {adj:.2e}")

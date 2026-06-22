@@ -60,6 +60,13 @@ plus the `ImplicitProblem` protocol already *is* the API.
   in nothing but the stdlib; numpy enters only through `reference_problems`. Concrete hooks with heavy
   deps (`fenics`, future `jax`) live in their own modules, imported explicitly (`implicit_probing.fenics`)
   and never from `__init__`, so a missing dep only bites when that hook is actually touched.
+- **Folder dependency rule.** `implicit_probing/` (the importable library) is the stable core: any
+  folder may import from it, but `tests/`, `examples/`, and `docs/` never import one another. So shared
+  code either earns its place in the library, if generic, or is duplicated across leaf folders, if
+  problem-specific — e.g. the generic finite-difference verifier lives in `validation.py`, whereas a
+  specific FEniCS PDE is written out in full in *both* its example and its test (legible vs. decisive,
+  two different jobs). Finite differences are testing-only: a probe is exact and far cheaper, so the
+  real workflow never uses them.
 
 ### Symbolic term representation (Algorithm 1)
 
@@ -107,8 +114,8 @@ Mirror T3Toolbox's conventions:
 
 - Correctness against **ground truth**: the symbolic engine vs the paper's hand-derived expansions,
   and the numeric probes (Algorithm 2) vs an independent finite-difference ground truth
-  (`reference_problems.forward_probe_by_finite_difference`), swept over symmetric / partial /
-  asymmetric probes.
+  (`implicit_probing.validation`, vector-agnostic; `reference_problems.forward_probe_by_finite_difference`
+  is the numpy convenience wrapper), swept over symmetric / partial / asymmetric probes.
 - `unittest` in `tests/` (flat, mirroring the flat package). Pattern: `subTest` over cases.
 - **Run** with the maintainer's env Python and `PYTHONPATH=$PWD`:
   `PYTHONPATH=$PWD <env-python> -m pytest tests/ -q`. (The env path is maintainer-local; see
@@ -126,8 +133,10 @@ Mirror T3Toolbox's conventions:
 
 **Algorithms 1 & 2 are implemented and validated — the method runs end-to-end.** The symbolic engine
 (`multiset.py`, `symbolic.py`) and the numeric driver (`driver.py`) are done; the toy reference problem
-+ finite-difference ground truth (`reference_problems.py`) validate the driver's probes across
-symmetric / partial / asymmetric symmetries (~1e-9). FEniCS/DOLFINx hook (`fenics.py`) + linear
-composition (`composition.py`) done. User-facing tour in `docs/overview.md`. Full suite green
-(`pytest tests/ -q`). No core algorithm work remains; next candidates are a JAX hook and bringing
-reference/example content into the library. See `dev/HANDOFF.md`.
++ finite-difference ground truth validate the driver's probes across symmetric / partial / asymmetric
+symmetries (~1e-9). FEniCS/DOLFINx hook (`fenics.py`) + linear composition (`composition.py`) done.
+Vector-agnostic verification helpers (FD ground truth + the exact reverse/forward adjoint identity) in
+`validation.py`. Runnable examples in `examples/` (`toy_polynomial.py` numpy-only, plus the two FEniCS
+scripts), each split into labelled probing / problem-setup / verification sections. User-facing tour in
+`docs/overview.md`. Full suite green (`pytest tests/ -q`). No core algorithm work remains; the main open
+candidate is a JAX hook. See `dev/HANDOFF.md`.

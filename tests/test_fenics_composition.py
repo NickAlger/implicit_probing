@@ -5,7 +5,6 @@
 # Gated test: composing the FEniCS nonlinear-Poisson map with a linear INPUT map (theta from a few
 # low-order polynomial features) and a linear OUTPUT map (the observation restricted to the boundary
 # dofs). Runs only where dolfinx is importable.
-import itertools
 import unittest
 
 import numpy as np
@@ -23,9 +22,7 @@ from implicit_probing.multiset import Multiset, subset_lattice
 from implicit_probing.driver import probe
 from implicit_probing.composition import ComposedProblem
 from implicit_probing.fenics import FenicsImplicitProblem
-
-_STENCILS = {1: ((-1, 1), (-0.5, 0.5)), 2: ((-1, 0, 1), (1.0, -2.0, 1.0)),
-             3: ((-2, -1, 1, 2), (-0.5, 1.0, -1.0, 0.5))}
+from implicit_probing import validation
 
 
 class FeatureParameterization:
@@ -125,19 +122,12 @@ def _build():
                 m_features=len(features), m_obs=len(top_dofs), top_dofs=top_dofs)
 
 
-def _fd_observe(observe, theta0, direction_orders, h):
-    """Mixed central difference of ``observe`` (full V_q vector) along theta-direction Functions."""
-    per = [(d, _STENCILS[m][0], _STENCILS[m][1], m) for d, m in direction_orders]
-    total = None
-    for picks in itertools.product(*[range(len(off)) for _, off, _, _ in per]):
-        tp = fem.Function(theta0.function_space); tp.x.array[:] = theta0.x.array
-        coeff = 1.0
-        for (d, off, wts, m), i in zip(per, picks):
-            tp.x.array[:] += off[i] * h * d.x.array
-            coeff *= wts[i] / h ** m
-        contrib = coeff * observe(tp)
-        total = contrib if total is None else total + contrib
-    return total
+def _perturb(point, scale, direction):
+    """FEniCS hook for validation.forward_probe_by_finite_difference: a fresh point + scale*direction."""
+    moved = fem.Function(point.function_space)
+    moved.x.array[:] = point.x.array + scale * direction.x.array
+    moved.x.scatter_forward()
+    return moved
 
 
 class TestComposedFenics(unittest.TestCase):
@@ -160,7 +150,8 @@ class TestComposedFenics(unittest.TestCase):
                     continue
                 with self.subTest(alpha=alpha, beta=beta):
                     spec = [(C.apply(self.x_dirs[k]), count) for k, count in beta.items()]
-                    obs_fd = _fd_observe(ctx["observe"], ctx["theta0"], spec, h=1e-3)
+                    obs_fd = validation.forward_probe_by_finite_difference(
+                        ctx["observe"], ctx["theta0"], spec, perturb=_perturb, h=1e-3)
                     expected = obs_fd[ctx["top_dofs"]]            # W applied to the FD observation
                     np.testing.assert_allclose(forward[beta], expected, atol=1e-5)
 
@@ -168,15 +159,9 @@ class TestComposedFenics(unittest.TestCase):
         # On the composed map f: reverse[beta] . xhat_k == omega_z . forward[beta + {k}] (exact).
         alpha = Multiset([1, 1, 2])
         forward, reverse = probe(self.composed, alpha, self.x_dirs, self.omega_z)
-        for beta in subset_lattice(alpha):
-            for k, xvec in self.x_dirs.items():
-                child = beta.add(k)
-                if not child.issubmultiset(alpha):
-                    continue
-                lhs = float(reverse[beta] @ xvec)
-                rhs = float(self.omega_z @ forward[child])
-                with self.subTest(beta=beta, k=k):
-                    np.testing.assert_allclose(lhs, rhs, rtol=1e-7, atol=1e-12)
+        # composed forward/reverse are plain numpy (W-codomain and C-domain), so default numpy pairing works
+        err = validation.reverse_forward_adjointness(forward, reverse, alpha, self.x_dirs, self.omega_z)
+        self.assertLess(err, 1e-7, f"max adjointness rel err {err:.2e}")
 
     def test_output_shapes(self):
         forward, reverse = probe(self.composed, Multiset([1, 2]), self.x_dirs, self.omega_z)

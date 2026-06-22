@@ -103,6 +103,25 @@ observation test function CG1) to catch space-conflation bugs.
   `examples/fenics_composition.py` (the same FEniCS setup, with the dimension-reduction story + the
   per-feature QoI gradient). Docs: `docs/composition.md`.
 
+**Verification helpers promoted to the library, and the examples restructured.**
+
+- `implicit_probing/validation.py` -- vector-agnostic, testing-only (a probe is exact and far cheaper,
+  so the real workflow never finite-differences). `forward_probe_by_finite_difference(q, theta0,
+  direction_orders, *, perturb=..., h, richardson)` (tensor-product central differences,
+  Richardson-extrapolated) and `reverse_forward_adjointness(forward, reverse, alpha, directions, omega,
+  *, pair_input, pair_output)` (max rel error of the exact identity `reverse[beta].d_k ==
+  omega.forward[beta+{k}]`). Array arithmetic lives in the `perturb` / `pair` hooks (numpy defaults), so
+  the toy needs no hooks and FEniCS/PETSc supplies its own. `validation` itself imports no numpy.
+- `reference_problems.forward_probe_by_finite_difference` is now a thin numpy wrapper over it
+  (signature + toy tests unchanged). The 4 hand-rolled FEniCS FD copies + stencil tables are gone.
+- Examples are linear scripts split into labelled `PDE SETUP` / `PROBING` / `RESULTS` / verification
+  banners so the ~5 probing lines stand out. New `examples/toy_polynomial.py` (numpy-only on-ramp).
+  The FEniCS examples now foreground the value prop (exact, shared-operator linear solves) and end with
+  a one-call `validation` cross-check. Verified by running both examples in the `fenicsx` env.
+- `tests/test_validation.py` (new) covers the helpers on the toy, incl. a custom `perturb` hook path.
+  FEniCS tests call `validation` instead of re-pasting stencils. Full suite green in both envs
+  (`t3toolbox`: 62 passed / 2 skipped; `fenicsx`: 67 passed, nothing skipped).
+
 ## Design decisions locked
 
 - Package / repo / import name: `implicit_probing` (GitHub renamed; local `origin` updated; local
@@ -118,6 +137,11 @@ observation test function CG1) to catch space-conflation bugs.
   `fenics` (and a future `jax`) are explicit submodule imports, never pulled in by `__init__`.
   `reference_problems` stays an explicit `implicit_probing.reference_problems` import (numpy-only),
   not in the top-level `__all__`.
+- **Folder dependency rule.** `implicit_probing/` (the importable library) is stable and may be
+  imported by any folder; `tests/`, `examples/`, `docs/` never import one another. Shared code is
+  therefore either promoted into the library (if generic — e.g. `validation.py`) or duplicated across
+  leaf folders (if problem-specific — e.g. a specific FEniCS PDE, written out in both example and test,
+  legible vs. decisive). Finite differences are testing-only; the real workflow uses exact probes.
 - Deps: `numpy` required (used by `reference_problems`; the probing core needs none), `jax` an optional
   extra; **no T3Toolbox dependency**.
 - `theta_0` will be a first-class input (multi-point gathering = trivial outer loop), for the
@@ -130,12 +154,13 @@ differences. Candidate next slices (maintainer to choose):
 
 1. **Autodiff-framework hooks.** FEniCS/DOLFINx hook **done** (`fenics.py`, see above). Remaining: a
    **JAX** hook (nested `jvp`/`jacfwd`), as an optional pip extra.
-2. **Bring reference/example content into the library.** Per discussion: the FEniCS example/test
-   setup (and the toy reference problem) likely have reusable pieces worth promoting into library
-   helpers — to be scoped next. (The original "thin OO frontend" slice is dropped; the functional API
-   stands as the API.)
-3. **Examples + more docs.** Done: `docs/overview.md`, `examples/fenics_poisson.py`,
-   `docs/fenics_hook.md`. Still wanted: a toy-only example script and a Sphinx build.
+2. **Bring reference/example content into the library — done for the verification machinery**
+   (`validation.py`) and the examples (labelled-section restructure + `toy_polynomial.py`). The
+   problem-specific PDE setup is deliberately *not* promoted (folder dependency rule + the PDE internals
+   are the lesson, so they stay visible in the example). Possible follow-ups if wanted: reusable FEniCS
+   helpers (homogenized-BC setup, observation operators) — but only if they stay generic.
+3. **More docs.** Done: `docs/overview.md` (+ examples section), `examples/*`, `docs/fenics_hook.md`,
+   `docs/composition.md`. Still wanted: a Sphinx build.
 4. **Probe-to-tensor bridge (optional).** Package the forward/reverse probes into whatever a
    downstream consumer (e.g. T3Toolbox fitting) expects — kept out of this repo unless wanted.
 

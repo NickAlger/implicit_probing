@@ -17,16 +17,10 @@ from dolfinx import mesh, fem
 import dolfinx.fem.petsc as petsc_fem
 from petsc4py import PETSc
 
-from implicit_probing.multiset import Multiset, subset_lattice
+from implicit_probing.multiset import Multiset
 from implicit_probing.driver import probe
 from implicit_probing.fenics import FenicsImplicitProblem
-
-# Central finite-difference stencils for the m-th derivative (offsets, weights), error O(h^2).
-_STENCILS = {
-    1: ((-1, 1),        (-0.5, 0.5)),
-    2: ((-1, 0, 1),     (1.0, -2.0, 1.0)),
-    3: ((-2, -1, 1, 2), (-0.5, 1.0, -1.0, 0.5)),
-}
+from implicit_probing import validation
 
 
 def _build_problem():
@@ -92,20 +86,12 @@ def _direction(V_theta, fn):
     return d
 
 
-def _forward_probe_fd(q_of, theta0, direction_orders, h):
-    """Tensor-product central-difference ground truth for D^j q(theta0) applied to the directions."""
-    import itertools
-    per = [(d, _STENCILS[m][0], _STENCILS[m][1], m) for d, m in direction_orders]
-    total = None
-    for picks in itertools.product(*[range(len(off)) for _, off, _, _ in per]):
-        tp = fem.Function(theta0.function_space); tp.x.array[:] = theta0.x.array
-        coeff = 1.0
-        for (d, off, wts, m), i in zip(per, picks):
-            tp.x.array[:] += off[i] * h * d.x.array
-            coeff *= wts[i] / h ** m
-        contrib = coeff * q_of(tp)
-        total = contrib if total is None else total + contrib
-    return total
+def _perturb(point, scale, direction):
+    """FEniCS hook for validation.forward_probe_by_finite_difference: a fresh point + scale*direction."""
+    moved = fem.Function(point.function_space)
+    moved.x.array[:] = point.x.array + scale * direction.x.array
+    moved.x.scatter_forward()
+    return moved
 
 
 class TestFenicsProbes(unittest.TestCase):
@@ -128,7 +114,8 @@ class TestFenicsProbes(unittest.TestCase):
             with self.subTest(symmetry=name):
                 forward, _ = probe(prob, alpha, dirs)
                 y = forward[alpha].array
-                y_fd = _forward_probe_fd(q_of, theta0, spec, h=1e-3)
+                y_fd = validation.forward_probe_by_finite_difference(
+                    q_of, theta0, spec, perturb=_perturb, h=1e-3)
                 rel = np.linalg.norm(y - y_fd) / max(np.linalg.norm(y_fd), 1e-30)
                 self.assertLess(rel, atol, f"{name}: rel err {rel:.2e}")
 
@@ -142,17 +129,11 @@ class TestFenicsProbes(unittest.TestCase):
         dirs = {1: self.d1, 2: self.d2}
         alpha = Multiset([1, 1, 2])
         forward, reverse = probe(prob, alpha, dirs, omega)
-        om = omega.x.array
-        for beta in subset_lattice(alpha):
-            for j, dvec in dirs.items():
-                child = beta.add(j)
-                if not child.issubmultiset(alpha):
-                    continue
-                lhs = float(np.dot(reverse[beta].array, dvec.x.array))
-                rhs = float(np.dot(om, forward[child].array))
-                with self.subTest(beta=beta, j=j):
-                    self.assertLess(abs(lhs - rhs) / max(abs(rhs), 1e-30), 1e-8,
-                                    f"beta={beta} j={j}: {lhs:.3e} vs {rhs:.3e}")
+        err = validation.reverse_forward_adjointness(
+            forward, reverse, alpha, dirs, omega,
+            pair_input=lambda rev, d: rev.array @ d.x.array,      # reverse covector (PETSc Vec) . dir (Function)
+            pair_output=lambda om, fwd: om.x.array @ fwd.array)   # omega (Function) . forward output (PETSc Vec)
+        self.assertLess(err, 1e-8, f"max adjointness rel err {err:.2e}")
 
 
 if __name__ == "__main__":

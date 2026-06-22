@@ -51,11 +51,24 @@ modules, imported explicitly so their dependencies stay optional.
 | `symbolic` | **Algorithm 1**: a pure-symbolic engine that works out *which* partial derivatives of `R` and `Q` each probe is a sum of. No numbers. |
 | `driver` | **Algorithm 2**: `probe(...)`, which walks the lattice, asks your problem to do the solves and assemble the partial-derivative sums, and returns the probes. |
 | `composition` | `ComposedProblem` — probe `W ∘ q ∘ C` for linear input/output maps `C`, `W` (see `composition.md`). |
-| `reference_problems` | a toy implicit map (`make_toy_problem`) with exact derivatives, plus a finite-difference ground truth — for testing and as a worked example of the problem interface. Imported explicitly (`implicit_probing.reference_problems`); needs numpy. |
+| `reference_problems` | a toy implicit map (`make_toy_problem`) with exact derivatives — for testing and as a worked example of the problem interface. Imported explicitly (`implicit_probing.reference_problems`); needs numpy. |
+| `validation` | finite-difference ground truth + the exact reverse/forward adjoint identity, for *checking* probes. This is testing infrastructure, **not** part of the real workflow — a probe is exact and far cheaper than differencing. Imported explicitly (`implicit_probing.validation`). |
 
 The probing machinery itself does no arithmetic on physics vectors, so the top-level
 `import implicit_probing` pulls in nothing but the standard library; numpy loads only when you reach
 for `reference_problems` (or your own numpy-backed problem).
+
+## Examples
+
+Runnable scripts in `examples/`, each in labelled sections so the probing stands out from the
+problem setup:
+
+- **`examples/toy_polynomial.py`** — numpy only, no heavy dependencies: the smallest end-to-end use
+  (build a problem, `probe`, read the probes). The best first read.
+- **`examples/fenics_poisson.py`** — the same three probing lines against a real nonlinear-Poisson
+  PDE (DOLFINx), with the QoI-gradient field as the payoff.
+- **`examples/fenics_composition.py`** — probing a dimension-reduced map `W ∘ q ∘ C` (see
+  `composition.md`).
 
 ## Using it on the built-in toy
 
