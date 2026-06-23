@@ -33,6 +33,8 @@ classifiers = [
 
 [project.optional-dependencies]
 jax = ["jax"]
+# Build the API + narrative documentation site (Sphinx, pydata theme, MyST for the narrative .md).
+docs = ["sphinx", "pydata-sphinx-theme", "myst-parser"]
 
 [project.urls]
 Homepage = "https://github.com/NickAlger/implicit_probing"
