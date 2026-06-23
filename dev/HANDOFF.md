@@ -129,6 +129,43 @@ observation test function CG1) to catch space-conflation bugs.
   FEniCS tests call `validation` instead of re-pasting stencils. Full suite green in both envs
   (`t3toolbox`: 67 passed / 2 skipped; `fenicsx`: 72 passed, nothing skipped).
 
+**JAX hook (Taylor-mode automatic differentiation) -- done.**
+
+- `implicit_probing/jax.py` -- `JaxImplicitProblem(R, Q, theta0, u0)` for a map whose `R(theta, u)` /
+  `Q(theta, u)` are plain JAX callables. **Frozen** at `(theta0, u0)` like the FEniCS hook (user does
+  the nonlinear/equilibrium solve outside); assembles `A = d_u R` via `jax.jacfwd` and LU-factorizes it
+  once (`jax.scipy.linalg.lu_factor`; adjoint = `lu_solve(..., trans=1)`). Pluggable
+  `forward_solver`/`adjoint_solver`. Optional **pip extra** `[jax]`; the numpy core never imports JAX.
+- Each `PartialTerm` -> a directional mixed partial by **Taylor-mode `jax.experimental.jet`**: lift
+  each direction into the stacked `w=(theta,u)`, fold one order-`m` jet per distinct direction (the
+  multiplicity payoff -- `O(j^2)`, not the `O(2^j)` of nested `jvp`); the open slot is one reverse-mode
+  `grad` of `pairing . partial(w)` sliced to the theta-/u-block. `jet` returns derivatives directly (no
+  `1/k!`), verified empirically; `jet`-in-`jet` and `grad`/`jacfwd`-through-`jet` all compose.
+- **Performance is structure-keyed `jit`**: the per-term kernel is `jax.jit` with the *structure*
+  (function, multiplicities tuple, open slot, `p`) **static** and the direction *vectors* **traced**,
+  so one compiled kernel serves every lattice node + direction value of that structure. Without it XLA
+  recompiles per distinct vector (closure-captured constants) and high order is unaffordable; with it,
+  same-structure probes are instant. Remaining cost is one-time XLA *compile* of each high-order jet
+  kernel (tens of seconds at order 3+); runtime after compile is trivial. Eager (`disable_jit`) is
+  catastrophically slow for nested high-order jets -- jit is required.
+- **Kernel reuse / canonical ordering (maintainer's call).** Structurally-equivalent partials must hit
+  ONE kernel. Two tiers: (1) *within-block* descending-multiplicity ordering -- universal, hoisted to
+  the driver (`driver._canonical` in `_lower`), now part of the `PartialTerm` contract + tested
+  (`test_each_block_is_in_canonical_descending_multiplicity_order`); (2) the *theta/u merge* -- valid
+  only for a stacked-variable AD backend (`jet` differentiates along whole-`w` directions; UFL cannot),
+  so it stays in the JAX hook. Measured on the `a^2 b` toy probe: 40 -> 34 distinct kernels, the gap
+  widening at higher order.
+- `examples/jax_deq.py` -- a **Deep Equilibrium Model** (fixed-point RNN): `u = tanh(W u + U x + b)`,
+  `theta = W` (flattened), `q = C u`. Probes the Taylor expansion of the equilibrium output in the
+  recurrent weights; labelled sections + a one-call `validation` cross-check (FD ~1e-9, adjointness
+  ~1e-14). `docs/jax_hook.md` documents the interface, the jet recipe, the structure-keyed jit, BC-free
+  freezing, and the x64 requirement.
+- `tests/test_jax.py` (gated via `pytest.importorskip("jax")`; runs in `t3toolbox`, x64 enabled): the
+  hook's probes vs the **numpy reference** on the same polynomials re-coded in JAX (exact, ~1e-15 at
+  every order -- same driver, different partial machinery), vs finite differences at low order, the
+  exact reverse/forward adjoint identity, and the minimal solve count. `t3toolbox` full suite now
+  **74 passed / 2 skipped** (the JAX compile makes it ~45s; the numpy core alone stays ~1s).
+
 ## Design decisions locked
 
 - Package / repo / import name: `implicit_probing` (GitHub renamed; local `origin` updated; local
@@ -174,15 +211,16 @@ observation test function CG1) to catch space-conflation bugs.
 The core method is complete: symbolic engine + numeric driver, validated end-to-end against finite
 differences. Candidate next slices (maintainer to choose):
 
-1. **Autodiff-framework hooks.** FEniCS/DOLFINx hook **done** (`fenics.py`, see above). Remaining: a
-   **JAX** hook (nested `jvp`/`jacfwd`), as an optional pip extra.
+1. **Autodiff-framework hooks.** FEniCS/DOLFINx hook **done** (`fenics.py`) and JAX hook **done**
+   (`jax.py`, Taylor-mode `jet`; see above). No framework hook is outstanding; further backends
+   (PyTorch, Enzyme, ...) would follow the same `ImplicitProblem` recipe.
 2. **Bring reference/example content into the library — done for the verification machinery**
    (`validation.py`) and the examples (labelled-section restructure + `toy_polynomial.py`). The
    problem-specific PDE setup is deliberately *not* promoted (folder dependency rule + the PDE internals
    are the lesson, so they stay visible in the example). Possible follow-ups if wanted: reusable FEniCS
    helpers (homogenized-BC setup, observation operators) — but only if they stay generic.
 3. **More docs.** Done: `docs/overview.md` (+ examples section), `examples/*`, `docs/fenics_hook.md`,
-   `docs/composition.md`. Still wanted: a Sphinx build.
+   `docs/jax_hook.md`, `docs/composition.md`. Still wanted: a Sphinx build.
 4. **Probe-to-tensor bridge (optional).** Package the forward/reverse probes into whatever a
    downstream consumer (e.g. T3Toolbox fitting) expects — kept out of this repo unless wanted.
 

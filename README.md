@@ -40,8 +40,8 @@ complementary side of the T4S method).
 
 Early development. Implemented and validated end-to-end: the **symbolic differentiation engine**
 (Algorithm 1) and the **numeric driver** (Algorithm 2), the `ImplicitProblem` interface with a numpy
-reference implementation, a **FEniCS/DOLFINx hook**, and linear input/output composition. A JAX hook is
-forthcoming.
+reference implementation, a **FEniCS/DOLFINx hook**, a **JAX hook** (Taylor-mode automatic
+differentiation), and linear input/output composition.
 
 ## Authors
 

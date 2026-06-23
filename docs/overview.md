@@ -69,6 +69,8 @@ problem setup:
   PDE (DOLFINx), with the QoI-gradient field as the payoff.
 - **`examples/fenics_composition.py`** — probing a dimension-reduced map `W ∘ q ∘ C` (see
   `composition.md`).
+- **`examples/jax_deq.py`** — the same probing lines against a deep equilibrium model (a fixed-point
+  RNN) in JAX, with `R` and `Q` differentiated automatically (see `jax_hook.md`).
 
 ## Using it on the built-in toy
 
@@ -125,7 +127,8 @@ Two things to know:
 
 - **The driver does no arithmetic on your vectors** — they are opaque to it. It only triggers solves
   (through your two `solve_*` methods) and asks you to assemble sums of partial derivatives. So the
-  same driver works whether your vectors are NumPy arrays, FEniCS functions, or PETSc vectors.
+  same driver works whether your vectors are NumPy arrays, FEniCS functions, PETSc vectors, or JAX
+  arrays.
 - **`assemble_partial_sum` is asked for a whole sum, not one partial at a time.** It receives a list
   of `PartialTerm`s — each a coefficient times a directional partial derivative of `R` or `Q`,
   possibly with one slot left open (the test function) and an outer pairing (the functional `OMEGA`,
