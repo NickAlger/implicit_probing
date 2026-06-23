@@ -188,6 +188,16 @@ class TestPartialTermRepresentation(unittest.TestCase):
         self.assertGreaterEqual(max_theta, 2)
         self.assertGreaterEqual(max_u, 2)
 
+    def test_each_block_is_in_canonical_descending_multiplicity_order(self):
+        # The driver serializes each symmetric block (theta directions; incremental factors) in
+        # canonical descending-multiplicity order, so two requests for the same partial arrive as
+        # identical structures and a multiplicity-exploiting backend can key/cache on the multiplicity
+        # pattern without re-canonicalizing (see PartialTerm / the JAX hook).
+        for t in self.rec.terms:
+            for block in (t.theta_dirs, t.u_vecs):
+                mults = [m for _, m in block]
+                self.assertEqual(mults, sorted(mults, reverse=True))
+
 
 class _CountingProblem:
     """Wraps an ImplicitProblem, counting the linearized solves the driver performs.

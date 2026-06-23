@@ -70,6 +70,12 @@ class PartialTerm:
     and the partial orders are the multiplicity sums (``a`` over ``theta_dirs``, ``b`` over ``u_vecs``).
     A backend may exploit the multiplicity -- e.g. a Taylor-mode / nested-jvp AD hook pushes one
     order-``m`` jet along a direction of multiplicity ``m`` -- or just expand it back to a flat list.
+
+    Each block is emitted in CANONICAL descending-multiplicity order (the order within a symmetric
+    block is a free choice): structurally-equivalent partials then arrive as identical structures, so a
+    multiplicity-exploiting backend can key/cache on the multiplicity pattern without re-canonicalizing
+    the block. (Unifying the two blocks -- valid only for a stacked-variable AD backend -- is a
+    further, backend-specific step; see the JAX hook.)
     """
     coefficient: int                      # integer multiplier (may be negative)
     function:    str                      # 'R' or 'Q'
@@ -114,6 +120,19 @@ def _resolve_pairing(symbolic_pairing, v_hat):
     raise ValueError(f'unexpected symbolic pairing {symbolic_pairing!r}')
 
 
+def _canonical(vector_multiplicity_pairs):
+    """Order one symmetric block's ``(vector, multiplicity)`` pairs canonically: descending multiplicity.
+
+    A partial is symmetric within its theta-block and (separately) its u-block, so the order in which a
+    block's directions are listed is a free choice. Fixing it -- here, at the one place a symbolic
+    multiset is serialized into the ordered ``PartialTerm`` tuple -- means two requests for the same
+    partial arrive as identical structures, so any multiplicity-exploiting backend can key/cache on the
+    multiplicity pattern without re-canonicalizing. (Ties keep their incoming order: the vectors are
+    opaque and not orderable, but a backend keys on the multiplicity pattern, which is tie-independent.)
+    """
+    return tuple(sorted(vector_multiplicity_pairs, key=lambda vec_mult: vec_mult[1], reverse=True))
+
+
 def _lower(
         expansion,                         # an Expansion (dict Term -> int)
         direction_vectors,                 # label -> theta-direction vector
@@ -125,12 +144,13 @@ def _lower(
     """Lower a symbolic expansion into a list of ``PartialTerm`` by substituting vectors for labels.
 
     The symbolic multisets are carried through as multiplicity, not flattened: ``theta_dirs`` and
-    ``u_vecs`` come out as ``(vector, multiplicity)`` pairs (see ``PartialTerm``).
+    ``u_vecs`` come out as ``(vector, multiplicity)`` pairs (see ``PartialTerm``), each block in
+    canonical descending-multiplicity order (``_canonical``).
     """
     terms = []
     for term, coeff in expansion.items():
-        theta_dirs = tuple((direction_vectors[label], mult) for label, mult in term.theta.items())
-        u_vecs = tuple((u_hat[gamma], mult) for gamma, mult in term.incrementals.items())
+        theta_dirs = _canonical((direction_vectors[label], mult) for label, mult in term.theta.items())
+        u_vecs = _canonical((u_hat[gamma], mult) for gamma, mult in term.incrementals.items())
         pairing = _resolve_pairing(term.pairing, v_hat)
         terms.append(PartialTerm(sign * coeff, term.function, theta_dirs, u_vecs, open_slot, pairing))
     return terms
