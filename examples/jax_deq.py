@@ -19,8 +19,12 @@ directional partials by automatic differentiation (Taylor-mode ``jet``) -- no ha
 of the nested ``tanh``. The probing code below (build a problem, call ``probe``, read the probes) is
 *identical* to the numpy and FEniCS examples; only the problem object changes.
 
-The first probe spends ~30 s compiling the high-order AD kernels (one-time XLA warm-up); the probes
-themselves are then immediate.
+This is the training-time view (output vs the weights). For the deployment-time companion -- the
+input -> output map of the same network frozen -- see ``examples/jax_deq_input.py``.
+
+The first probe spends a few seconds compiling the high-order AD kernels (one-time XLA warm-up, nearly
+independent of the network size -- it is the derivative *order* that costs, not the dimensions); the
+probes themselves are then immediate.
 
 Run:
 
@@ -40,7 +44,7 @@ from implicit_probing.jax import JaxImplicitProblem
 # ====================================================================================================
 # PROBLEM  --  a Deep Equilibrium Model;  theta = the recurrent weights W (flattened)
 # ====================================================================================================
-N_U, N_IN, N_Q = 3, 2, 2                     # hidden state / input / output dimensions
+N_U, N_IN, N_Q = 16, 4, 3                     # hidden state / input / output dimensions
 
 # Fixed (non-probed) pieces of the network: input, input weights, bias, linear readout.
 rng = np.random.default_rng(0)
@@ -84,10 +88,10 @@ problem = JaxImplicitProblem(R, Q, theta0, u0)
 
 # Directions are (vector, max_power) pairs in weight space: two weight perturbations, probed up to
 # a^2 b^1 (every derivative through a^2 b). omega is the QoI covector in the output space.
-a = jnp.asarray(rng.standard_normal(theta0.shape[0]))
-b = jnp.asarray(rng.standard_normal(theta0.shape[0]))
+a = jnp.asarray(rng.standard_normal(theta0.shape[0])); a = a / jnp.linalg.norm(a)   # unit weight-space
+b = jnp.asarray(rng.standard_normal(theta0.shape[0])); b = b / jnp.linalg.norm(b)   # perturbations
 directions = [(a, 2), (b, 1)]
-omega = jnp.asarray(np.array([1.0, 0.0]))    # QoI = the first output component
+omega = jnp.asarray(np.eye(N_Q)[0])          # QoI = the first output component
 
 
 # ====================================================================================================
@@ -108,9 +112,13 @@ for mu, value in sorted(forward.items()):
     print(f"  {str(mu):<8} D^{sum(mu)} q = {np.array2string(np.asarray(value), precision=4)}{note}")
 
 # reverse[(0,0)] is the gradient of the QoI omega(q) w.r.t. the recurrent weights -- the sensitivity of
-# the equilibrium output to *every* weight, from a single adjoint solve.
-print(f"\nQoI gradient  d omega(q) / d W  (flattened, {theta0.shape[0]} weights):")
-print(f"  {np.array2string(np.asarray(reverse[(0, 0)]), precision=4)}")
+# the equilibrium output to *every* one of the N_U*N_U weights, from a single adjoint solve. Reshape it
+# back to the weight matrix and summarize (printing all weights would be unwieldy at this size).
+grad_W = np.asarray(reverse[(0, 0)]).reshape(N_U, N_U)
+i_max = tuple(int(k) for k in np.unravel_index(np.argmax(np.abs(grad_W)), grad_W.shape))
+print(f"\nQoI gradient  d omega(q) / d W  ({N_U}x{N_U} = {theta0.shape[0]} weights), one adjoint solve:")
+print(f"  Frobenius norm {np.linalg.norm(grad_W):.4f};  most sensitive weight W{list(i_max)} "
+      f"= {grad_W[i_max]:+.4f}")
 
 
 # ====================================================================================================

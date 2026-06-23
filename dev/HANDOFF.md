@@ -156,10 +156,13 @@ observation test function CG1) to catch space-conflation bugs.
   so it stays in the JAX hook. Measured on the `a^2 b` toy probe: 40 -> 34 distinct kernels, the gap
   widening at higher order.
 - `examples/jax_deq.py` -- a **Deep Equilibrium Model** (fixed-point RNN): `u = tanh(W u + U x + b)`,
-  `theta = W` (flattened), `q = C u`. Probes the Taylor expansion of the equilibrium output in the
-  recurrent weights; labelled sections + a one-call `validation` cross-check (FD ~1e-9, adjointness
-  ~1e-14). `docs/jax_hook.md` documents the interface, the jet recipe, the structure-keyed jit, BC-free
-  freezing, and the x64 requirement.
+  `q = C u`, with `theta = W` (flattened, 16 hidden units -> 256 weights). Probes the Taylor expansion
+  of the equilibrium output in the recurrent weights (training-time view). `examples/jax_deq_input.py`
+  is the companion: the same network **frozen**, with `theta = x` -- the **input -> output** map (a
+  local Taylor surrogate of the trained net around an operating point; reverse[(0,0)] is the input
+  saliency). Both: labelled sections + a one-call `validation` cross-check (FD ~1e-9, adjointness
+  ~1e-14), ~9 s wall (compile-bound; size-independent -- n_u 3->48 adds ~15%). `docs/jax_hook.md`
+  documents the interface, the jet recipe, the structure-keyed jit, BC-free freezing, and x64.
 - `tests/test_jax.py` (gated via `pytest.importorskip("jax")`; runs in `t3toolbox`, x64 enabled): the
   hook's probes vs the **numpy reference** on the same polynomials re-coded in JAX (exact, ~1e-15 at
   every order -- same driver, different partial machinery), vs finite differences at low order, the

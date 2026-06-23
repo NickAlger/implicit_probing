@@ -97,9 +97,11 @@ Two canonicalizations maximize that reuse, so that *structurally equivalent* par
   in the driver.
 
 **First-call compile cost.** Compiling the high-order jet kernels is a one-time XLA cost that grows
-with order (tens of seconds for an order-3 probe); the probes themselves are then immediate, and
-repeated probes of the same structure reuse the compiled kernel. For faster reruns across processes,
-enable JAX's persistent compilation cache.
+with the derivative *order* (and the complexity of `R`, `Q`) — a few to tens of seconds for an
+order-3 probe — but is nearly **independent of the problem's dimensions** (it is the order that costs,
+not the size). The probes themselves are then immediate, and repeated probes of the same structure
+reuse the compiled kernel. For faster reruns across processes, enable JAX's persistent compilation
+cache.
 
 ## Solvers
 

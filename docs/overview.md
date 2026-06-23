@@ -70,7 +70,11 @@ problem setup:
 - **`examples/fenics_composition.py`** — probing a dimension-reduced map `W ∘ q ∘ C` (see
   `composition.md`).
 - **`examples/jax_deq.py`** — the same probing lines against a deep equilibrium model (a fixed-point
-  RNN) in JAX, with `R` and `Q` differentiated automatically (see `jax_hook.md`).
+  RNN) in JAX, with `R` and `Q` differentiated automatically (see `jax_hook.md`). Probes the output
+  against the recurrent **weights**.
+- **`examples/jax_deq_input.py`** — the same DEQ frozen (trained), probing the **input → output** map:
+  a local Taylor surrogate of the network around an input operating point. Same API, `x` in the role
+  of `theta`.
 
 ## Using it on the built-in toy
 
