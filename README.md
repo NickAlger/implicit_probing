@@ -1,5 +1,3 @@
-**WORK IN PROGRESS — DO NOT USE**
-
 # implicit_probing
 
 Probing the higher-derivative tensors of maps that depend *implicitly* on the solution of a large
@@ -28,6 +26,45 @@ state operator `A = d_u R`, or its adjoint) and differ only in their right-hand 
 organized as a traversal of the lattice of multiset-subsets of the probing directions, so that
 high-order probes reuse all of their lower-order sub-probes.
 
+## Install
+
+```bash
+pip install implicit_probing          # core: symbolic engine + numeric driver (numpy only)
+pip install "implicit_probing[jax]"    # add the JAX hook (Taylor-mode autodiff)
+```
+
+The FEniCS/DOLFINx hook needs DOLFINx, which is **not** pip-installable — install it separately (see
+the [FEniCS install guide](https://fenicsproject.org/download/)), then use `implicit_probing.fenics`.
+
+## Quickstart
+
+```python
+import numpy as np
+from implicit_probing import probe
+from implicit_probing.reference_problems import make_toy_problem
+
+# A built-in toy: q(theta) = Q(theta, u(theta)) with R(theta, u) = 0, theta and q in R^2 and a 3-dof
+# implicit state u. Swap this for your own object implementing the ImplicitProblem protocol.
+problem = make_toy_problem()
+
+# Probing directions as (vector, max_power) pairs: probe `a` up to power 2 and `b` up to power 1,
+# i.e. ask for every mixed derivative up to a^2 b. omega is an output-space functional (the QoI).
+a = np.array([1.0, 0.3])
+b = np.array([0.4, -0.6])
+omega = np.array([1.0, 0.0])
+
+forward, reverse = probe(problem, [(a, 2), (b, 1)], omega)
+
+forward[(2, 1)]   # D^3 q [a, a, b], an output-space vector   ->  array([-0.1197, -0.0638])
+reverse[(0, 0)]   # gradient of omega(q) w.r.t. theta          ->  array([ 0.2077,  0.2953])
+```
+
+`forward[mu]` is the mixed partial of order `mu` (a Taylor coefficient of `q` on the slice through the
+probing directions); `reverse[mu]` is the matching parameter-space covector, from a single adjoint
+solve. Every lower-order sub-probe falls out of the same shared-operator solves for free. For a real
+problem you implement the three-method `ImplicitProblem` protocol — see the
+[overview](docs/overview.md) and the FEniCS/JAX scripts under [`examples/`](examples/).
+
 ## Scope
 
 `implicit_probing` is **laser-focused on the derivative machinery** and depends on nothing but
@@ -38,10 +75,10 @@ complementary side of the T4S method).
 
 ## Status
 
-Early development. Implemented and validated end-to-end: the **symbolic differentiation engine**
-(Algorithm 1) and the **numeric driver** (Algorithm 2), the `ImplicitProblem` interface with a numpy
-reference implementation, a **FEniCS/DOLFINx hook**, a **JAX hook** (Taylor-mode automatic
-differentiation), and linear input/output composition.
+First public release (`2026.0.0`). Implemented and validated end-to-end: the **symbolic
+differentiation engine** (Algorithm 1) and the **numeric driver** (Algorithm 2), the
+`ImplicitProblem` interface with a numpy reference implementation, a **FEniCS/DOLFINx hook**, a
+**JAX hook** (Taylor-mode automatic differentiation), and linear input/output composition.
 
 ## Authors
 
