@@ -1,0 +1,50 @@
+# CI for implicit_probing. Three jobs match the package's three-tier dependency story:
+#   core   -- the numpy-only library across every advertised Python (3.9-3.13). The FEniCS and JAX
+#             tests auto-skip here (their deps are absent), so this job backs the version classifiers.
+#   jax    -- adds the pip-installable [jax] extra on one modern Python; exercises the JAX hook.
+#   fenics -- runs the FULL suite inside the official dolfinx image (dolfinx is not pip-installable),
+#             mirroring the maintainer's local `fenicsx` env.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  core:
+    name: core (numpy) ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: python -m pip install --upgrade pip
+      - run: pip install . pytest
+      - run: pytest tests/ -q          # FEniCS + JAX tests skip (deps absent)
+
+  jax:
+    name: jax hook (3.12)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install --upgrade pip
+      - run: pip install .[jax] pytest
+      - run: pytest tests/ -q          # JAX tests run; FEniCS tests skip
+
+  fenics:
+    name: full suite (dolfinx image)
+    runs-on: ubuntu-latest
+    container: dolfinx/dolfinx:stable
+    steps:
+      - uses: actions/checkout@v4
+      - run: pip install .[jax] pytest
+      - run: pytest tests/ -q          # numpy + JAX + FEniCS all run
