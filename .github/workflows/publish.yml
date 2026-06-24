@@ -1,0 +1,43 @@
+# Publish implicit_probing to PyPI on a GitHub Release, via Trusted Publishing (OIDC) -- no API token
+# or stored secret. PyPI mints a short-lived credential from GitHub's OIDC identity; this requires a
+# one-time "trusted publisher" registration on PyPI (see dev/RELEASE_CHECKLIST.md, "PyPI Trusted
+# Publishing setup"). Build and publish are split so the publish job carries only the id-token
+# permission and touches nothing but the built artifacts.
+name: Publish to PyPI
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  build:
+    name: Build distributions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install --upgrade build twine
+      - run: python -m build
+      - run: twine check dist/*          # same metadata check we run locally before release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    name: Publish to PyPI
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/implicit-probing
+    permissions:
+      id-token: write                    # mint the OIDC token for Trusted Publishing
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1

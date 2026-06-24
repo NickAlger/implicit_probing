@@ -57,9 +57,9 @@ the release punch-list.
 - [x] **6. Ship a `py.typed` marker.** **Done & verified**: empty `implicit_probing/py.typed` +
   `[tool.setuptools.package-data]`. Confirmed present in the built wheel *and* in the installed
   location after `pip install` of the wheel.
-- [ ] **7. Commit + host the docs.** Commit: **done** (the Sphinx scaffolding). Hosting: still to
-  decide (ReadTheDocs vs GH Pages) — note the repo is private until release, which affects RTD/Pages
-  wiring.
+- [~] **7. Commit + host the docs.** Commit: **done** (the Sphinx scaffolding). Hosting: **deferred —
+  gated by discussion with the co-author** (ReadTheDocs vs GH Pages). Note the repo is private until
+  release, which affects RTD/Pages wiring; revisit after that conversation.
 - [ ] **8. `CITATION.cff` + a "How to cite" README section**, pointing at the **arXiv preprint** of the
   T4S paper. **BLOCKED:** the algorithms cited here (Algorithms 1 & 2) only exist as algorithm boxes in
   the *revised* paper; the current arXiv version has only the prose/derivations. Gated on uploading the
@@ -79,8 +79,10 @@ the release punch-list.
   full public API imports → `examples/toy_polynomial.py` runs from the installed wheel (probes ~1e-12
   vs FD, adjointness ~1e-16) → `py.typed` present. Caught nothing broken. (Worth keeping as a manual
   pre-release step; could later be folded into CI as a post-build job.)
-- [ ] **PyPI publish workflow** (trusted publishing / token) so future releases are one tag. Decision:
-  add; maintainer hasn't done this before — walk through it.
+- [x] **PyPI publish workflow** — **done**: `.github/workflows/publish.yml`, Trusted Publishing (OIDC,
+  no stored token), triggered on a published GitHub Release; build + `twine check` + publish split into
+  two jobs. YAML validated locally. The one-time PyPI/GitHub-side setup is in "PyPI Trusted Publishing
+  setup" below (done at release time).
 
 ---
 
@@ -90,3 +92,35 @@ the release punch-list.
 (`py.typed`) wants the clean-env smoke test to confirm it's packaged; #2 (CI) and #7 (docs hosting) are
 the larger lifts. #8 (citation) is externally blocked on the arXiv revision. Nothing here is blocked on
 code changes.
+
+---
+
+## PyPI Trusted Publishing setup
+
+`.github/workflows/publish.yml` uses **Trusted Publishing (OIDC)** — no API token or GitHub secret.
+PyPI mints a short-lived credential from GitHub's OIDC identity. One-time setup, done at release time:
+
+1. **PyPI account** — an account at <https://pypi.org> with a verified email and **2FA enabled** (PyPI
+   requires 2FA to upload).
+2. **Register a pending trusted publisher** (this works *before* the project exists). Go to
+   <https://pypi.org/manage/account/publishing/> → "Add a new pending publisher" and enter:
+   - **PyPI Project Name:** `implicit_probing`
+   - **Owner:** `NickAlger`
+   - **Repository name:** `implicit_probing`
+   - **Workflow name:** `publish.yml`
+   - **Environment name:** `pypi`  ← must match `environment.name` in `publish.yml`
+
+   The first successful publish creates the project and promotes the pending publisher to a regular one.
+3. **GitHub environment** — create an Environment named `pypi` (repo Settings → Environments → New
+   environment → `pypi`). Optional but recommended: add a required-reviewer rule so a human approves
+   each publish.
+4. **Version must match the build** — `python -m build` reads the version from `pyproject.toml`
+   (`2026.0.0`), *not* the git tag; tag the release to match (e.g. `v2026.0.0`).
+5. **Release** — Releases → Draft a new release → create the tag → Publish. The `release: published`
+   event triggers `publish.yml` (build → `twine check` → upload).
+
+**First-release safety (optional, recommended):** dry-run against **TestPyPI** first — register a
+pending publisher the same way at <https://test.pypi.org>, temporarily add
+`with: { repository-url: https://test.pypi.org/legacy/ }` to the publish step, cut a pre-release to
+verify the whole pipeline, then revert. Catches any pipeline/metadata problem before it touches real
+PyPI.
