@@ -212,7 +212,12 @@ observation test function CG1) to catch space-conflation bugs.
   boundary" decision.) `Multiset` / `subset_lattice` stay exported for advanced/engine use.
 
 The core method is complete: symbolic engine + numeric driver, validated end-to-end against finite
-differences. Candidate next slices (maintainer to choose):
+differences.
+
+**Release prep is underway** toward a public PyPI release (CalVer `2026.0.0`) — packaging metadata,
+`py.typed`, CI, the Sphinx docs site, and the PyPI publish workflow are all done; docs hosting and the
+paper citation are externally gated. See [`dev/RELEASE_CHECKLIST.md`](RELEASE_CHECKLIST.md) for the live
+punch-list. The original candidate next slices (maintainer to choose):
 
 1. **Autodiff-framework hooks.** FEniCS/DOLFINx hook **done** (`fenics.py`) and JAX hook **done**
    (`jax.py`, Taylor-mode `jet`; see above). No framework hook is outstanding; further backends
@@ -223,7 +228,9 @@ differences. Candidate next slices (maintainer to choose):
    are the lesson, so they stay visible in the example). Possible follow-ups if wanted: reusable FEniCS
    helpers (homogenized-BC setup, observation operators) — but only if they stay generic.
 3. **More docs.** Done: `docs/overview.md` (+ examples section), `examples/*`, `docs/fenics_hook.md`,
-   `docs/jax_hook.md`, `docs/composition.md`. Still wanted: a Sphinx build.
+   `docs/jax_hook.md`, `docs/composition.md`, and a **Sphinx build** (`docs/conf.py` + autosummary API
+   reference; builds clean). Remaining doc task is *hosting* the built site (deferred — see the release
+   checklist).
 4. **Probe-to-tensor bridge (optional).** Package the forward/reverse probes into whatever a
    downstream consumer (e.g. T3Toolbox fitting) expects — kept out of this repo unless wanted.
 
