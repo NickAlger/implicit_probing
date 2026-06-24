@@ -8,10 +8,10 @@ version = "2026.0.0"
 description = "Derivative probing of maps defined implicitly through a state equation (Algorithms 1 & 2 of the T4S paper)"
 requires-python = ">=3.9"
 # Minimal dependencies by design. The pure-Python symbolic engine needs none; numpy is for the
-# numeric driver (forthcoming). Autodiff-framework hooks (JAX, FEniCS) will be optional extras so
-# users only install the frameworks they actually use.
+# numeric driver and the reference problem. The JAX hook is an optional extra ([jax] below); the
+# FEniCS/DOLFINx hook needs dolfinx, which is not pip-installable (the user installs it separately).
 dependencies = [
-    "numpy",
+    "numpy>=1.21",
 ]
 authors = [
   {name = "Nick Alger", email = "nalger225@gmail.com"},
@@ -28,11 +28,20 @@ keywords = [
   "PDE-constrained", "tensor probing", "Taylor series", "automatic differentiation",
 ]
 classifiers = [
-  "Programming Language :: Python",
+  "Development Status :: 5 - Production/Stable",
+  "Intended Audience :: Science/Research",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Scientific/Engineering :: Mathematics",
 ]
 
 [project.optional-dependencies]
-jax = ["jax"]
+jax = ["jax>=0.4"]
 # Build the API + narrative documentation site (Sphinx, pydata theme, MyST for the narrative .md).
 docs = ["sphinx", "pydata-sphinx-theme", "myst-parser"]
 
@@ -43,3 +52,8 @@ Repository = "https://github.com/NickAlger/implicit_probing"
 
 [tool.setuptools.packages.find]
 include = ["implicit_probing*"]
+
+# Ship the PEP 561 marker so downstream type-checkers honor the inline annotations (the public API is
+# a typed Protocol). Verified to land in the wheel by the clean-env smoke test.
+[tool.setuptools.package-data]
+implicit_probing = ["py.typed"]
