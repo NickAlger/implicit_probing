@@ -1,7 +1,7 @@
 # Contributing to implicit_probing
 
 Thanks for your interest! This package is deliberately small and **focused on the derivative-probing
-machinery** (Algorithms 1 & 2 of the T4S paper). [`CLAUDE.md`](CLAUDE.md) is the project guide — it
+machinery** (Algorithms 1 & 2 of the T4S paper). [`ARCHITECTURE.md`](ARCHITECTURE.md) is the project guide — it
 covers the architecture and the rationale behind the design. Bug reports, documentation fixes, and new
 framework hooks (following the existing FEniCS / JAX pattern) are all welcome.
 
@@ -31,7 +31,7 @@ linear solves (`tests/test_driver.py::TestSolveCounts`).
 
 Mirror the surrounding code. The conventions — array shape-comment style, the file-header block, one
 `__all__` per module, citing the `t4s.pdf` equation/algorithm a piece of code implements, and
-"structural problems raise unconditionally" — are documented in [`CLAUDE.md`](CLAUDE.md). There is no
+"structural problems raise unconditionally" — are documented in [`ARCHITECTURE.md`](ARCHITECTURE.md). There is no
 auto-formatter; the alignment is deliberate, so please don't reflow unrelated code.
 
 ## Pull requests

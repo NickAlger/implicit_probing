@@ -73,8 +73,8 @@ the release punch-list.
 
 - [x] **CHANGELOG.md** — `2026.0.0 — unreleased` initial-release entry. **Done**.
 - [x] **CONTRIBUTING.md** — **done**: minimal stub (dev setup incl. the FEniCS caveat, running the
-  tests with the solve-count note, a pointer to `CLAUDE.md` for the deep conventions, and a PR/MIT
-  note). Kept minimal on purpose — `CLAUDE.md` already carries the architecture and house rules.
+  tests with the solve-count note, a pointer to `ARCHITECTURE.md` for the deep conventions, and a PR/MIT
+  note). Kept minimal on purpose — `ARCHITECTURE.md` already carries the architecture and house rules.
 - [x] **Dependency lower bounds** — **done**: `numpy>=1.21`, `jax>=0.4`. Best-effort floors (CI tests
   current versions, not the floor); permissive enough not to force ancient pins.
 - [x] **Clean-env smoke test** — **done** (run once locally): fresh venv → `pip install` the wheel →
