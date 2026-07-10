@@ -4,7 +4,11 @@ All notable changes to `implicit_probing` are documented here. The format follow
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions are date-based
 (`YYYY.MINOR.PATCH`).
 
-## 2026.0.0 — unreleased
+## Unreleased
+
+_Nothing yet._
+
+## 2026.0.0 — 2026-07-10
 
 First public release. Implements Algorithms 1 & 2 of Section 4 of the T4S paper
 (Alger, Christierson, Chen & Ghattas, 2026; arXiv:2603.21141).
