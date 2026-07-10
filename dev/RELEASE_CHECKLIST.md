@@ -111,8 +111,12 @@ dry-run first.)
 
 ## PyPI Trusted Publishing setup
 
-`.github/workflows/publish.yml` uses **Trusted Publishing (OIDC)** — no API token or GitHub secret.
-PyPI mints a short-lived credential from GitHub's OIDC identity. One-time setup, done at release time:
+`.github/workflows/publish.yml` uses **Trusted Publishing (OIDC)** — no API token or GitHub secret. The
+index mints a short-lived credential from GitHub's OIDC identity. The workflow has **two paths sharing
+one build**: a published GitHub Release → real **PyPI** (job `pypi`, environment `pypi`), and a manual
+**Run workflow** → **TestPyPI** (job `testpypi`, environment `testpypi`) for the dry-run. Each path needs
+its own pending-publisher registration + GitHub environment. Real-PyPI one-time setup (do the TestPyPI
+dry-run below first):
 
 1. **PyPI account** — an account at <https://pypi.org> with a verified email and **2FA enabled** (PyPI
    requires 2FA to upload).
@@ -133,8 +137,20 @@ PyPI mints a short-lived credential from GitHub's OIDC identity. One-time setup,
 5. **Release** — Releases → Draft a new release → create the tag → Publish. The `release: published`
    event triggers `publish.yml` (build → `twine check` → upload).
 
-**First-release safety (optional, recommended):** dry-run against **TestPyPI** first — register a
-pending publisher the same way at <https://test.pypi.org>, temporarily add
-`with: { repository-url: https://test.pypi.org/legacy/ }` to the publish step, cut a pre-release to
-verify the whole pipeline, then revert. Catches any pipeline/metadata problem before it touches real
-PyPI.
+### TestPyPI dry-run (recommended before the first real release)
+
+`publish.yml` has a manual `workflow_dispatch` path that uploads to **TestPyPI** — no temporary edit, no
+revert, and it can't misroute a real release (the real-PyPI job runs only on `release: published`).
+One-time setup, parallel to the PyPI setup above:
+
+- **TestPyPI pending publisher** — at <https://test.pypi.org/manage/account/publishing/>, add a pending
+  publisher with the **same** values as the PyPI one except **Environment name: `testpypi`**.
+- **GitHub `testpypi` environment** — repo Settings → Environments → New environment → `testpypi`.
+
+Then run it: **Actions → "Publish" → "Run workflow"** (on `main`). It builds, runs `twine check`, and
+uploads `2026.0.0` to TestPyPI (job `testpypi`). Verify at
+<https://test.pypi.org/project/implicit-probing/>; optionally install it back with
+`pip install -i https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple implicit-probing`
+(the extra index lets `numpy` resolve from real PyPI). A given version can be uploaded only **once** per
+index, so a second dry-run needs a throwaway `.devN` version bump. Once the dry-run is clean, do the
+real-PyPI setup above and cut the release.

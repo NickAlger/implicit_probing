@@ -1,13 +1,18 @@
-# Publish implicit_probing to PyPI on a GitHub Release, via Trusted Publishing (OIDC) -- no API token
-# or stored secret. PyPI mints a short-lived credential from GitHub's OIDC identity; this requires a
-# one-time "trusted publisher" registration on PyPI (see dev/RELEASE_CHECKLIST.md, "PyPI Trusted
-# Publishing setup"). Build and publish are split so the publish job carries only the id-token
-# permission and touches nothing but the built artifacts.
-name: Publish to PyPI
+# Publish implicit_probing via Trusted Publishing (OIDC) -- no API token or stored secret; the index
+# mints a short-lived credential from GitHub's OIDC identity. Two paths share one build:
+#   * a published GitHub Release -> upload to real PyPI  (job `pypi`,     environment `pypi`)
+#   * a manual "Run workflow"    -> upload to TestPyPI   (job `testpypi`, environment `testpypi`)
+# The manual path is a safe, repeatable dry-run: it exercises the whole build -> check -> publish
+# pipeline against TestPyPI with NO temporary edit to this file, so a real release can never be
+# misrouted. Each path needs its own one-time trusted-publisher registration + GitHub environment
+# (see dev/RELEASE_CHECKLIST.md, "PyPI Trusted Publishing setup"). Build and publish are split so the
+# publish jobs carry only the id-token permission and touch nothing but the built artifacts.
+name: Publish
 
 on:
   release:
     types: [published]
+  workflow_dispatch:        # manual TestPyPI dry-run
 
 jobs:
   build:
@@ -26,8 +31,28 @@ jobs:
           name: dist
           path: dist/
 
-  publish:
+  testpypi:
+    name: Publish to TestPyPI (dry-run)
+    if: github.event_name == 'workflow_dispatch'
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/project/implicit-probing/
+    permissions:
+      id-token: write                    # mint the OIDC token for Trusted Publishing
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+
+  pypi:
     name: Publish to PyPI
+    if: github.event_name == 'release'
     needs: build
     runs-on: ubuntu-latest
     environment:
