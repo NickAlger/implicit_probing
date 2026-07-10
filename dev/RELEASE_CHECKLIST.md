@@ -57,9 +57,14 @@ the release punch-list.
 - [x] **6. Ship a `py.typed` marker.** **Done & verified**: empty `implicit_probing/py.typed` +
   `[tool.setuptools.package-data]`. Confirmed present in the built wheel *and* in the installed
   location after `pip install` of the wheel.
-- [~] **7. Commit + host the docs.** Commit: **done** (the Sphinx scaffolding). Hosting: **deferred —
-  gated by discussion with the co-author** (ReadTheDocs vs GH Pages). Note the repo is private until
-  release, which affects RTD/Pages wiring; revisit after that conversation.
+- [~] **7. Commit + host the docs.** Commit: **done**. Hosting: **decided — GitHub Pages via GitHub
+  Actions** (`.github/workflows/docs.yml`): builds the Sphinx site inside the `dolfinx/dolfinx:stable`
+  image (autosummary imports the FEniCS/JAX hooks, so dolfinx + jax must be present) and deploys to
+  Pages on every push to `main` (plus manual `workflow_dispatch`). The build runs `sphinx -W`, so a doc
+  regression fails CI. **Remaining (one-time, at go-public):** repo Settings → Pages → "Build and
+  deployment" → Source = **GitHub Actions**; note that Pages for a *private* repo needs a paid plan, so
+  the site publishes once the repo is flipped public (until then the build job passes but deploy won't
+  serve). Site URL will be `https://nickalger.github.io/implicit_probing/`.
 - [x] **8. `CITATION.cff` + a "How to cite" README section**, pointing at the **arXiv preprint** of the
   T4S paper. **Done** — unblocked now that the revised paper has an arXiv id (**arXiv:2603.21141**;
   Alger, Christierson, Chen & Ghattas 2026). `CITATION.cff` (software authors Blake-first, with a
