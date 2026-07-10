@@ -10,7 +10,8 @@ the release punch-list.
   to SemVer `1.0.0`. So the literal version strings in `pyproject.toml` / `__init__.py` stay; "v1.0"
   is just shorthand for "the first public release". No prose should still call it WIP / early-dev.
 - **Distribution target: PyPI** (project name normalizes to `implicit-probing`).
-- **Repo visibility:** currently **private**; flip to **public** at release time.
+- **Repo visibility:** **public** (flipped 2026-07-10). The GitHub Pages docs site is live at
+  <https://nickalger.github.io/implicit_probing/>.
 - **Authorship on commits:** Nick, with a `Co-Authored-By: Claude` trailer. Blake is the **first/lead
   package author** (LICENSE / pyproject / headers / `CITATION.cff`) but not on commit trailers while not
   at the keyboard. The *paper* citation keeps its own author order (Alger, Christierson, Chen & Ghattas;
@@ -34,13 +35,12 @@ the release punch-list.
  : banner + status gone; new **Install** block (core / `[jax]` / FEniCS caveat) and a
   **Quickstart** showing the toy `probe(...)` call. The snippet is **run-verified against the installed
   wheel** (the `array([...])` outputs are the real values).
-- [~] **2. Add CI** (`.github/workflows/ci.yml`). **Written**, three jobs: `core`
+- [x] **2. Add CI** (`.github/workflows/ci.yml`). **Done & green on GitHub.** Three jobs: `core`
   (numpy-only matrix, Python 3.9–3.13 — backs the version classifiers), `jax` (`.[jax]` on 3.12), and
-  `fenics` (full suite inside the `dolfinx/dolfinx:stable` container). YAML validated locally; **cannot
-  actually run until the branch is pushed to GitHub**. Likely first-run tweaks: the dolfinx image may
-  be PEP 668 externally-managed (pip may need a venv or `--break-system-packages`), and Python 3.9 in
-  the `core` job may surface install/syntax issues (if so, bump `requires-python`). Watch the first run
-  and iterate.
+  `fenics` (full suite inside the `dolfinx/dolfinx:stable` container). All green on push to `main`. The
+  anticipated first-run snags did not bite: plain `pip install` works in the dolfinx image (also proven
+  by the green docs build, which installs `.[jax,docs]` the same way), so no `--break-system-packages`
+  was needed, and Python 3.9 installs cleanly.
 - [~] **3. Confirm the PyPI name is free** and validate the build. Name: **confirmed available** —
   `GET https://pypi.org/simple/implicit-probing/` returns **404**, which the simple index does only
   when no project is registered (a reserved/zero-release name 200s). `implicit_probing` and
@@ -62,14 +62,13 @@ the release punch-list.
 - [x] **6. Ship a `py.typed` marker.** **Done & verified**: empty `implicit_probing/py.typed` +
   `[tool.setuptools.package-data]`. Confirmed present in the built wheel *and* in the installed
   location after `pip install` of the wheel.
-- [~] **7. Commit + host the docs.** Commit: **done**. Hosting: **decided — GitHub Pages via GitHub
-  Actions** (`.github/workflows/docs.yml`): builds the Sphinx site inside the `dolfinx/dolfinx:stable`
-  image (autosummary imports the FEniCS/JAX hooks, so dolfinx + jax must be present) and deploys to
-  Pages on every push to `main` (plus manual `workflow_dispatch`). The build runs `sphinx -W`, so a doc
-  regression fails CI. **Remaining (one-time, at go-public):** repo Settings → Pages → "Build and
-  deployment" → Source = **GitHub Actions**; note that Pages for a *private* repo needs a paid plan, so
-  the site publishes once the repo is flipped public (until then the build job passes but deploy won't
-  serve). Site URL will be `https://nickalger.github.io/implicit_probing/`.
+- [x] **7. Commit + host the docs.** **Done — site is live** at
+  <https://nickalger.github.io/implicit_probing/>. GitHub Pages via GitHub Actions
+  (`.github/workflows/docs.yml`): builds the Sphinx site inside the `dolfinx/dolfinx:stable` image
+  (autosummary imports the FEniCS/JAX hooks, so dolfinx + jax must be present) and deploys to Pages on
+  every push to `main` (plus manual `workflow_dispatch`); the build runs `sphinx -W`, so a doc
+  regression fails CI. Pages Source = **GitHub Actions** (set at go-public). API pages are titled by
+  short name (module prefix stripped; methods keep the `Class.method` form for disambiguation).
 - [x] **8. `CITATION.cff` + a "How to cite" README section**, pointing at the **arXiv preprint** of the
   T4S paper. **Done** — unblocked now that the revised paper has an arXiv id (**arXiv:2603.21141**;
   Alger, Christierson, Chen & Ghattas 2026). `CITATION.cff` (software authors Blake-first, with a
@@ -102,10 +101,11 @@ the release punch-list.
 
 ## What's left
 
-Almost everything is done. The only open items are **#2 (watch the first CI run), #3 (`twine upload`),
-and #7 (Pages → Source = "GitHub Actions")** — all gated on flipping the repo **public** / release day,
-none on code changes. Making the repo public (see "Repo visibility" above) is the action that unblocks
-all three.
+The repo is public, CI is green, and the docs site is live — so **#2 and #7 are done**. The **only**
+remaining item is **#3: the actual `twine upload` to PyPI**, which happens when the release is cut:
+complete the one-time Trusted Publishing setup (see "PyPI Trusted Publishing setup" below) and draft a
+GitHub Release tagged `v2026.0.0` to trigger `publish.yml`. (Optional but recommended: a TestPyPI
+dry-run first.)
 
 ---
 
