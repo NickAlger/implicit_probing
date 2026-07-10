@@ -11,15 +11,20 @@ the release punch-list.
   is just shorthand for "the first public release". No prose should still call it WIP / early-dev.
 - **Distribution target: PyPI** (project name normalizes to `implicit-probing`).
 - **Repo visibility:** currently **private**; flip to **public** at release time.
-- **Authorship on commits:** Nick, with a `Co-Authored-By: Claude` trailer. Blake is a package author
-  (LICENSE / pyproject / headers) but not on commit trailers while not at the keyboard.
+- **Authorship on commits:** Nick, with a `Co-Authored-By: Claude` trailer. Blake is the **first/lead
+  package author** (LICENSE / pyproject / headers / `CITATION.cff`) but not on commit trailers while not
+  at the keyboard. The *paper* citation keeps its own author order (Alger, Christierson, Chen & Ghattas;
+  see #8) — the software-first vs. paper-order difference is deliberate.
 
-## Verified state (2026-06-23)
+## Verified state (2026-07-10)
 
-- Full test suite **green**: 79 passed, 69 subtests, ~46 s in the `fenicsx` conda env (numpy core +
-  the gated FEniCS & JAX suites all run).
-- Sphinx docs **build** cleanly (`sphinx -b html docs docs/_build/html`).
-- Git clean of build artifacts (`*.egg-info/`, `docs/_build/`, `out_*/` all gitignored, not tracked).
+- Full test suite **green**: 79 passed, 69 subtests in the `fenicsx` conda env (numpy core + the gated
+  FEniCS & JAX suites all run; wall time ~45–60 s, dominated by the one-time JAX compile).
+- Sphinx docs **build** cleanly with warnings-as-errors (`sphinx -W -b html docs docs/_build/html`);
+  the autosummary API reference now generates **one page per function and one page per method**.
+- **Docs auto-deploy** is wired up (`.github/workflows/docs.yml` → GitHub Pages; see #7).
+- Git clean of build artifacts (`*.egg-info/`, `docs/_build/`, `docs/api/generated/`, `out_*/` all
+  gitignored, not tracked).
 
 ---
 
@@ -95,12 +100,12 @@ the release punch-list.
 
 ---
 
-## Suggested order
+## What's left
 
-#1 (README) and #4–#5 (metadata) are quick wins that make `twine check` (#3) meaningful; #6
-(`py.typed`) wants the clean-env smoke test to confirm it's packaged; #2 (CI) and #7 (docs hosting) are
-the larger lifts. #8 (citation) is now done (arXiv:2603.21141 is available). Nothing here is blocked on
-code changes.
+Almost everything is done. The only open items are **#2 (watch the first CI run), #3 (`twine upload`),
+and #7 (Pages → Source = "GitHub Actions")** — all gated on flipping the repo **public** / release day,
+none on code changes. Making the repo public (see "Repo visibility" above) is the action that unblocks
+all three.
 
 ---
 
