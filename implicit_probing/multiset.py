@@ -1,4 +1,4 @@
-# Authors: Nick Alger and Blake Christierson
+# Authors: Blake Christierson and Nick Alger
 # Copyright: MIT License (2026)
 # Github: https://github.com/NickAlger/implicit_probing
 """Immutable multisets and the multiset-subset lattice.
@@ -8,7 +8,7 @@ hashable, immutable ``Multiset`` type and ``subset_lattice``, which enumerates e
 given multiset, ordered by nondecreasing cardinality.
 
 These are the combinatorial backbone of the symbolic derivative-probing engine (``symbolic.py``,
-Algorithm 1 of t4s.pdf Section 4). A derivative probe is indexed by a multiset ``alpha`` of the
+Algorithm 1 of the T4S paper, Section 4). A derivative probe is indexed by a multiset ``alpha`` of the
 probing directions; the incremental state/adjoint variables are indexed by its sub-multisets
 ``beta``; and the symbolic terms themselves contain a multiset of directions ``mu`` and a multiset
 *of multisets* ``Gamma`` (the incremental-state factors). Because ``Multiset`` is hashable and its

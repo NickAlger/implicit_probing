@@ -1,4 +1,4 @@
-<!-- Authors: Nick Alger and Blake Christierson -->
+<!-- Authors: Blake Christierson and Nick Alger -->
 <!-- Copyright: MIT License (2026) -->
 <!-- Github: https://github.com/NickAlger/implicit_probing -->
 
@@ -13,7 +13,7 @@ q(theta) = Q(theta, u(theta)),     where the state u(theta) solves     R(theta, 
 `implicit_probing` computes the forward and reverse probes of the higher-derivative tensors
 `D^j q(theta0)` — the contractions against direction vectors that serve as training data for a local
 Taylor surrogate. It is a clean, standalone implementation of **Algorithms 1 and 2 of Section 4** of
-the T4S paper (Alger, Christierson, Chen & Ghattas, 2026), and the probing machinery depends on
+the T4S paper (Alger, Christierson, Chen & Ghattas, 2026; arXiv:2603.21141), and the probing machinery depends on
 nothing but the standard library (numpy enters only with a concrete problem).
 
 New here? Start with the [Overview](overview.md) for the tour, then the

@@ -60,10 +60,12 @@ the release punch-list.
 - [~] **7. Commit + host the docs.** Commit: **done** (the Sphinx scaffolding). Hosting: **deferred —
   gated by discussion with the co-author** (ReadTheDocs vs GH Pages). Note the repo is private until
   release, which affects RTD/Pages wiring; revisit after that conversation.
-- [ ] **8. `CITATION.cff` + a "How to cite" README section**, pointing at the **arXiv preprint** of the
-  T4S paper. **BLOCKED:** the algorithms cited here (Algorithms 1 & 2) only exist as algorithm boxes in
-  the *revised* paper; the current arXiv version has only the prose/derivations. Gated on uploading the
-  revised paper to arXiv. Revisit once that's live.
+- [x] **8. `CITATION.cff` + a "How to cite" README section**, pointing at the **arXiv preprint** of the
+  T4S paper. **Done** — unblocked now that the revised paper has an arXiv id (**arXiv:2603.21141**;
+  Alger, Christierson, Chen & Ghattas 2026). `CITATION.cff` (software authors Blake-first, with a
+  `preferred-citation` for the paper in its own author order) + a README **How to cite** section with
+  the reference and a BibTeX entry. `t4s.pdf` filename references (which lived in the sibling T3Toolbox
+  repo) were replaced repo-wide with "the T4S paper (arXiv:2603.21141)" so the docs are self-contained.
 - [x] **9. Document the FEniCS install caveat.** **Done**: the README Install block points
   to the [FEniCS install guide](https://fenicsproject.org/download/) and leaves DOLFINx to the user; no
   install prescribed. `[jax]` stays a normal pip extra; FEniCS is not a pip extra (correctly). (Could
@@ -92,7 +94,7 @@ the release punch-list.
 
 #1 (README) and #4–#5 (metadata) are quick wins that make `twine check` (#3) meaningful; #6
 (`py.typed`) wants the clean-env smoke test to confirm it's packaged; #2 (CI) and #7 (docs hosting) are
-the larger lifts. #8 (citation) is externally blocked on the arXiv revision. Nothing here is blocked on
+the larger lifts. #8 (citation) is now done (arXiv:2603.21141 is available). Nothing here is blocked on
 code changes.
 
 ---

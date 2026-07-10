@@ -1,7 +1,7 @@
-# Authors: Nick Alger and Blake Christierson
+# Authors: Blake Christierson and Nick Alger
 # Copyright: MIT License (2026)
 # Github: https://github.com/NickAlger/implicit_probing
-"""Algorithm 2 of t4s.pdf Section 4: the derivative-probing driver.
+"""Algorithm 2 of the T4S paper, Section 4: the derivative-probing driver.
 
 Given a problem that can (a) solve linear systems with the linearized state operator ``A = d_u R`` and
 its adjoint, and (b) *assemble sums* of directional partial derivatives of ``R`` and ``Q``, this walks

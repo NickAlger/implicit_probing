@@ -7,7 +7,8 @@ A standalone Python package for **derivative probing of implicitly-defined maps*
 ## What this is
 
 A clean, from-scratch implementation of **Algorithms 1 & 2, Section 4** of the T4S paper ("Tucker
-Tensor Train Taylor Series", Alger, Christierson, Chen & Ghattas 2026). Given a parameter-to-output
+Tensor Train Taylor Series", Alger, Christierson, Chen & Ghattas 2026, arXiv:2603.21141). Given a
+parameter-to-output
 map
 
     q(theta) = Q(theta, u(theta)),   where the state u(theta) solves   R(theta, u) = 0,
@@ -27,9 +28,11 @@ Non-goal (context only — NOT built here): the maintainer's longer-term researc
 polynomial (coefficients as a Tucker tensor train) to probe data gathered at *many* expansion points.
 Keep `theta_0` a first-class input so multi-point gathering stays a trivial outer loop.
 
-## The paper (`t4s.pdf` lives in the sibling T3Toolbox repo)
+## The paper
 
-Reference for the algorithms, not a design target — when good general-purpose library design and the
+The T4S paper — Alger, Christierson, Chen & Ghattas (2026), *Tucker Tensor Train Taylor Series*,
+arXiv:2603.21141. Reference for the algorithms, not a design target — when good general-purpose
+library design and the
 paper's specific usage conflict, library design wins. Section 4 is the relevant part; Sections 2-3
 give the setting and notation. **The math, in brief:**
 
@@ -84,7 +87,7 @@ A symbolic term is a tuple `(rho, tau, mu, Gamma)` (`symbolic.Term`):
 A sum of terms is a `dict[Term, int]` (term -> integer coefficient). The four probing objects (forward
 `q`, residual `R`, gradient `g`, adjoint residual `R^adj`) are the SAME differentiation algorithm
 applied to three seeds (`g` and `R^adj` share one seed, differing only at numeric assembly). The
-single-direction rule is t4s.pdf eqs (19)-(20); the lattice traversal is Algorithm 1.
+single-direction rule is the T4S paper, eqs (19)-(20); the lattice traversal is Algorithm 1.
 
 ### The driver and problem interface (Algorithm 2)
 
@@ -106,7 +109,7 @@ implicit map + the exact-derivative `Polynomial` + a finite-difference ground tr
 
 ## Code style
 
-Mirror T3Toolbox's conventions:
+The house conventions:
 
 - **Signature shape-comment style** for array code: the trailing `# shape` comment is the type the
   language can't express (one arg per line, name/type/`#`-comment aligned). The array-heavy code
@@ -114,7 +117,7 @@ Mirror T3Toolbox's conventions:
   driver are non-array code, so shape comments mostly don't apply there.
 - File header block: `# Authors / # Copyright / # Github`.
 - One `__all__` per module.
-- Cite the t4s.pdf equation/algorithm number in the docstring when code implements one.
+- Cite the T4S paper's equation/algorithm number in the docstring when code implements one.
 - House philosophy: **structural problems raise unconditionally** (wrong shape/inconsistent lengths);
   numerical preconditions are a later concern. No auto-formatter near the deliberately-aligned style.
 

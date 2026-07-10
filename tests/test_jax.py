@@ -1,9 +1,9 @@
-# Authors: Nick Alger and Blake Christierson
+# Authors: Blake Christierson and Nick Alger
 # Copyright: MIT License (2026)
 # Github: https://github.com/NickAlger/implicit_probing
 #
-# Gated test for the JAX hook: runs only where jax is importable (e.g. the `t3toolbox` conda env),
-# and is skipped (not failed) elsewhere. High-order probes need float64, so x64 is enabled below.
+# Gated test for the JAX hook: runs only where jax is importable (install the `[jax]` extra), and is
+# skipped (not failed) elsewhere. High-order probes need float64, so x64 is enabled below.
 #
 # The JAX problem re-codes the trusted numpy toy's polynomials (same coefficients) as JAX callables, so
 # we get THREE independent checks of the hook: (1) its probes vs the numpy reference implementation's

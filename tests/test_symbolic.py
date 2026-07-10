@@ -1,4 +1,4 @@
-# Authors: Nick Alger and Blake Christierson
+# Authors: Blake Christierson and Nick Alger
 # Copyright: MIT License (2026)
 # Github: https://github.com/NickAlger/implicit_probing
 import unittest
@@ -38,7 +38,7 @@ class TestForwardExpansions(unittest.TestCase):
         })
 
     def test_second_derivative_symmetric_matches_paper(self):
-        # t4s.pdf Section 4.2 worked example:
+        # the T4S paper, Section 4.2 worked example:
         #   D^2 q theta_1^2 = d2_thetatheta Q theta_1^2 + 2 d2_thetau Q theta_1 uhat_{1}
         #                     + d2_uu Q uhat_{1}^2 + d_u Q uhat_{1,1}
         D = sym.differentiate_over_lattice(sym.seed_forward_q(), ms(1, 1))

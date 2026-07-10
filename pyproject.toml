@@ -14,11 +14,12 @@ dependencies = [
     "numpy>=1.21",
 ]
 authors = [
-  {name = "Nick Alger", email = "nalger225@gmail.com"},
   {name = "Blake Christierson", email = "bechristierson@utexas.edu"},
+  {name = "Nick Alger", email = "nalger225@gmail.com"},
 ]
 maintainers = [
   {name = "Nick Alger", email = "nalger225@gmail.com"},
+  {name = "Blake Christierson", email = "bechristierson@utexas.edu"},
 ]
 readme = "README.md"
 license = "MIT"

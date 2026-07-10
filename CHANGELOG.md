@@ -7,7 +7,7 @@ All notable changes to `implicit_probing` are documented here. The format follow
 ## 2026.0.0 — unreleased
 
 First public release. Implements Algorithms 1 & 2 of Section 4 of the T4S paper
-(Alger, Christierson, Chen & Ghattas, 2026).
+(Alger, Christierson, Chen & Ghattas, 2026; arXiv:2603.21141).
 
 ### Added
 - **Symbolic differentiation engine** (Algorithm 1): pure-Python multiset/term algebra that expands a

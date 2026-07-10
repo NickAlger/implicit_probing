@@ -1,7 +1,7 @@
-# Authors: Nick Alger and Blake Christierson
+# Authors: Blake Christierson and Nick Alger
 # Copyright: MIT License (2026)
 # Github: https://github.com/NickAlger/implicit_probing
-"""Algorithm 1 of t4s.pdf Section 4: symbolic differentiation of derivative-probe expansions.
+"""Algorithm 1 of the T4S paper, Section 4: symbolic differentiation of derivative-probe expansions.
 
 A derivative probe of an implicitly-defined map expands, via the chain rule and the implicit function
 theorem, into a sum of directional *partial* derivatives of the output map ``Q`` and the state
@@ -30,7 +30,7 @@ objects of derivative probing are produced by the *same* differentiation algorit
 seeds: the forward map ``q`` (``seed_forward_q``), the residual ``R`` (``seed_residual_r``), and a
 shared reverse seed for the gradient ``g`` and the adjoint residual ``R^adj`` (``seed_reverse``).
 
-The single-direction differentiation rule is t4s.pdf eqs (19)-(20); the traversal of the
+The single-direction differentiation rule is the T4S paper, eqs (19)-(20); the traversal of the
 multiset-subset lattice is Algorithm 1.
 """
 import collections
@@ -52,7 +52,7 @@ __all__ = [
 
 @dataclasses.dataclass(frozen=True, repr=False)
 class Pairing:
-    """The outer pairing ``rho`` of a symbolic term (t4s.pdf Section 4.4).
+    """The outer pairing ``rho`` of a symbolic term (the T4S paper, Section 4.4).
 
     Three kinds:
 
@@ -97,7 +97,7 @@ def adjoint(delta: Multiset) -> Pairing:
 
 @dataclasses.dataclass(frozen=True, repr=False)
 class Term:
-    """One symbolic term ``(rho, tau, mu, Gamma)`` of a derivative-probe expansion (t4s.pdf eqs 9, 16).
+    """One symbolic term ``(rho, tau, mu, Gamma)`` of a derivative-probe expansion (the T4S paper, eqs 9, 16).
 
     See the module docstring for the meaning of the four fields. ``Term`` is frozen and hashable, so
     a sum of terms is a ``dict[Term, int]``.
@@ -132,7 +132,7 @@ def seed_reverse() -> Expansion:
 
     Both equal the Lagrangian ``L = omega(Q) + R(v)`` symbolically; they differ only in *which*
     argument is left open during numeric assembly (theta for ``g``, u for ``R^adj``), not in the
-    symbolic expansion. See t4s.pdf Sections 4.3-4.4.
+    symbolic expansion. See the T4S paper, Sections 4.3-4.4.
     """
     return {
         Term(OMEGA, 'Q', Multiset(), Multiset()): 1,
@@ -146,7 +146,7 @@ def differentiate_term(
         term: Term,
         direction,                         # the direction index i to differentiate in
 ) -> Expansion:
-    """Total derivative of one symbolic term in one direction (t4s.pdf eqs 19-20).
+    """Total derivative of one symbolic term in one direction (the T4S paper, eqs 19-20).
 
     Returns the coefficient contributions ``{new_term: multiplier}`` of differentiating ``term`` once
     in ``direction``. The caller multiplies these by the term's own coefficient and accumulates them.
@@ -205,7 +205,7 @@ def extract_state_rhs(
         expansion: Expansion,              # D_beta of the residual R, i.e. D^|beta| R Theta^beta
         beta:      Multiset,
 ) -> Expansion:
-    """The incremental-state right-hand side terms ``b_beta`` (still symbolic), t4s.pdf eqs (10)-(11).
+    """The incremental-state right-hand side terms ``b_beta`` (still symbolic), the T4S paper, eqs (10)-(11).
 
     The incremental state equation ``0 = D^|beta| R Theta^beta`` contains exactly one operator term,
     ``(ID, 'R', empty, {beta})`` = ``d_u R uhat_beta`` = ``A uhat_beta``. This isolates it (the future
@@ -223,7 +223,7 @@ def extract_adjoint_rhs(
         expansion: Expansion,              # D_beta of the reverse seed, i.e. D^|beta| of the Lagrangian
         beta:      Multiset,
 ) -> Expansion:
-    """The incremental-adjoint right-hand side terms ``c_beta`` (still symbolic), t4s.pdf eqs (17)-(18).
+    """The incremental-adjoint right-hand side terms ``c_beta`` (still symbolic), the T4S paper, eqs (17)-(18).
 
     Under an open u-slot the term ``(adjoint(beta), 'R', empty, empty)`` is ``(d_u R)(vhat_beta)`` =
     ``A* vhat_beta``; this isolates it (the future left-hand side of ``A* vhat_beta = c_beta``) and

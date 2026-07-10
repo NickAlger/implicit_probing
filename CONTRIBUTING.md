@@ -30,7 +30,7 @@ linear solves (`tests/test_driver.py::TestSolveCounts`).
 ## Code style and conventions
 
 Mirror the surrounding code. The conventions — array shape-comment style, the file-header block, one
-`__all__` per module, citing the `t4s.pdf` equation/algorithm a piece of code implements, and
+`__all__` per module, citing the T4S paper's equation/algorithm a piece of code implements, and
 "structural problems raise unconditionally" — are documented in [`ARCHITECTURE.md`](ARCHITECTURE.md). There is no
 auto-formatter; the alignment is deliberate, so please don't reflow unrelated code.
 

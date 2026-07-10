@@ -1,4 +1,4 @@
-# Authors: Nick Alger and Blake Christierson
+# Authors: Blake Christierson and Nick Alger
 # Copyright: MIT License (2026)
 # Github: https://github.com/NickAlger/implicit_probing
 """implicit_probing: forward and reverse derivative probes of implicitly-defined maps.
@@ -11,6 +11,9 @@ The public API is re-exported here, so the common path is a single flat import::
 reverse probes of ``D^j q(theta0)``; a problem just implements the three-method ``ImplicitProblem``
 protocol. The whole probing machinery is dependency-free (it does no arithmetic on physics vectors),
 so importing this package pulls in nothing but the standard library.
+
+This is a standalone implementation of Algorithms 1 and 2 of the T4S paper: Alger, Christierson,
+Chen & Ghattas (2026), *Tucker Tensor Train Taylor Series*, arXiv:2603.21141.
 
 Concrete problems live in their own modules, imported explicitly so their dependencies stay optional:
 

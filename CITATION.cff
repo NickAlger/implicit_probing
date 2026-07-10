@@ -1,0 +1,48 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite both the software itself and the paper it implements (the preferred citation below)."
+title: implicit_probing
+abstract: >-
+  Forward and reverse derivative probes of implicitly-defined maps: given a
+  parameter-to-output map q(theta) = Q(theta, u(theta)) whose state u(theta)
+  solves R(theta, u) = 0, compute contractions of the higher-derivative tensors
+  D^j q(theta_0) via shared-operator linearized solves. A standalone
+  implementation of Algorithms 1 and 2 of the Tucker Tensor Train Taylor Series
+  paper.
+type: software
+authors:
+  - family-names: Christierson
+    given-names: Blake
+    email: bechristierson@utexas.edu
+  - family-names: Alger
+    given-names: Nick
+    email: nalger225@gmail.com
+version: 2026.0.0
+license: MIT
+repository-code: "https://github.com/NickAlger/implicit_probing"
+url: "https://github.com/NickAlger/implicit_probing"
+keywords:
+  - derivative probing
+  - adjoint method
+  - implicit function theorem
+  - PDE-constrained
+  - Taylor series
+  - automatic differentiation
+preferred-citation:
+  type: article
+  title: "Tucker Tensor Train Taylor Series"
+  authors:
+    - family-names: Alger
+      given-names: Nick
+    - family-names: Christierson
+      given-names: Blake
+    - family-names: Chen
+      given-names: Peng
+    - family-names: Ghattas
+      given-names: Omar
+  year: 2026
+  journal: "arXiv preprint"
+  url: "https://arxiv.org/abs/2603.21141"
+  identifiers:
+    - type: other
+      value: "arXiv:2603.21141"
+      description: "arXiv preprint identifier"

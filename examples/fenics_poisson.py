@@ -1,4 +1,4 @@
-# Authors: Nick Alger and Blake Christierson
+# Authors: Blake Christierson and Nick Alger
 # Copyright: MIT License (2026)
 # Github: https://github.com/NickAlger/implicit_probing
 """Worked example: derivative probing of a nonlinear-Poisson parameter-to-observation map (DOLFINx).

@@ -19,7 +19,8 @@ This package computes **forward and reverse derivative probes** of `D^j q(theta_
 derivatives of `R` and `Q`, by the adjoint method and the implicit function theorem. It is a clean,
 standalone implementation of **Algorithms 1 and 2 of Section 4** of:
 
-> Alger, Christierson, Chen & Ghattas (2026), *Tucker Tensor Train Taylor Series*.
+> Alger, N., Christierson, B., Chen, P., & Ghattas, O. (2026). *Tucker Tensor Train Taylor Series*.
+> arXiv preprint arXiv:2603.21141.
 
 Each probe reduces to a set of linearized solves that all share the same operator (the linearized
 state operator `A = d_u R`, or its adjoint) and differ only in their right-hand sides. The work is
@@ -80,7 +81,26 @@ differentiation engine** (Algorithm 1) and the **numeric driver** (Algorithm 2),
 `ImplicitProblem` interface with a numpy reference implementation, a **FEniCS/DOLFINx hook**, a
 **JAX hook** (Taylor-mode automatic differentiation), and linear input/output composition.
 
+## How to cite
+
+If you use this package, please cite the paper it implements:
+
+> Alger, N., Christierson, B., Chen, P., & Ghattas, O. (2026). *Tucker Tensor Train Taylor Series*.
+> arXiv preprint arXiv:2603.21141.
+
+```bibtex
+@article{alger2026t4s,
+  title   = {Tucker Tensor Train Taylor Series},
+  author  = {Alger, Nick and Christierson, Blake and Chen, Peng and Ghattas, Omar},
+  journal = {arXiv preprint arXiv:2603.21141},
+  year    = {2026},
+}
+```
+
+To cite the software itself, see [`CITATION.cff`](CITATION.cff) (GitHub's "Cite this repository"
+also reads it).
+
 ## Authors
 
-* Nick Alger (nalger225@gmail.com)
 * Blake Christierson (bechristierson@utexas.edu)
+* Nick Alger (nalger225@gmail.com)

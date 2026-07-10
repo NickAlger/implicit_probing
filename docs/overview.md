@@ -35,8 +35,8 @@ only in their right-hand sides. The work is organized over the *subsets* of the 
 so a high-order probe reuses all of its lower-order sub-probes for free.
 
 This package is a clean, standalone implementation of Algorithms 1 and 2 from Section 4 of the T4S
-paper. It depends only on NumPy, and its probe output is plain arrays — so it can feed any downstream
-use (surrogate fitting, optimization, etc.).
+paper (Alger, Christierson, Chen & Ghattas, 2026; arXiv:2603.21141). It depends only on NumPy, and its
+probe output is plain arrays — so it can feed any downstream use (surrogate fitting, optimization, etc.).
 
 ## How the code is organized
 

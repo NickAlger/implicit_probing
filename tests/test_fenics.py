@@ -1,9 +1,9 @@
-# Authors: Nick Alger and Blake Christierson
+# Authors: Blake Christierson and Nick Alger
 # Copyright: MIT License (2026)
 # Github: https://github.com/NickAlger/implicit_probing
 #
-# Gated test for the DOLFINx hook: runs only where dolfinx is importable (the `fenicsx` conda env),
-# and is skipped (not failed) elsewhere (e.g. the numpy-only `t3toolbox` env).
+# Gated test for the DOLFINx hook: runs only where dolfinx is importable, and is skipped (not
+# failed) elsewhere (e.g. a numpy-only environment without dolfinx installed).
 import unittest
 
 import numpy as np

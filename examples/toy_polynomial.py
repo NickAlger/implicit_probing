@@ -1,4 +1,4 @@
-# Authors: Nick Alger and Blake Christierson
+# Authors: Blake Christierson and Nick Alger
 # Copyright: MIT License (2026)
 # Github: https://github.com/NickAlger/implicit_probing
 """Worked example (numpy only, no FEniCS): derivative probing of the toy implicit polynomial map.

@@ -2,7 +2,7 @@
 
 ## Where we are
 
-**Slice 1 complete: the symbolic differentiation engine (Algorithm 1, t4s.pdf Section 4).** Pure
+**Slice 1 complete: the symbolic differentiation engine (Algorithm 1, the T4S paper, Section 4).** Pure
 Python, no numpy.
 
 - `implicit_probing/multiset.py` — immutable, hashable `Multiset` (elements may themselves be
