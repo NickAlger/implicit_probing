@@ -41,14 +41,12 @@ the release punch-list.
   anticipated first-run snags did not bite: plain `pip install` works in the dolfinx image (also proven
   by the green docs build, which installs `.[jax,docs]` the same way), so no `--break-system-packages`
   was needed, and Python 3.9 installs cleanly.
-- [~] **3. Confirm the PyPI name is free** and validate the build. Name: **confirmed available** —
-  `GET https://pypi.org/simple/implicit-probing/` returns **404**, which the simple index does only
-  when no project is registered (a reserved/zero-release name 200s). `implicit_probing` and
-  `implicit-probing` normalize to the same name; the name is claimed at first `twine upload`. Build:
-  **done & clean** — `python -m build` produced sdist+wheel and `twine check` **PASSED** on both
-  (verified locally in a throwaway venv, Python 3.11). METADATA confirmed: `License-Expression: MIT`,
-  all 10 classifiers, `Requires-Python >=3.9`, `numpy` + `[jax]`/`[docs]` extras. Only **actual
-  `twine upload`** remains (at release, once name is claimed).
+- [x] **3. Publish to PyPI.** **DONE — `implicit_probing 2026.0.0` is live on PyPI** (published
+  2026-07-10 via `publish.yml` Trusted Publishing, `pypi` environment with a required-reviewer gate).
+  Verified: `pip install implicit_probing` into a clean venv imports the full public API and probes
+  match the README quickstart; PyPI METADATA is correct (`License-Expression: MIT`, `Requires-Python
+  >=3.9`, `numpy` + `[jax]`/`[docs]` extras, **Blake-first** `Author-email`, `py.typed` shipped).
+  <https://pypi.org/project/implicit-probing/>
 
 ## P1 — Should-do for a credible release
 
@@ -101,11 +99,11 @@ the release punch-list.
 
 ## What's left
 
-The repo is public, CI is green, and the docs site is live — so **#2 and #7 are done**. The **only**
-remaining item is **#3: the actual `twine upload` to PyPI**, which happens when the release is cut:
-complete the one-time Trusted Publishing setup (see "PyPI Trusted Publishing setup" below) and draft a
-GitHub Release tagged `v2026.0.0` to trigger `publish.yml`. (Optional but recommended: a TestPyPI
-dry-run first.)
+**Nothing — `2026.0.0` is released.** Every checklist item is done: repo public, CI green, docs live at
+<https://nickalger.github.io/implicit_probing/>, and the package on PyPI (`pip install implicit_probing`).
+The "PyPI Trusted Publishing setup" section below now serves as the runbook for **future** releases (bump
+the version in `pyproject.toml` **and** `implicit_probing/__init__.py`, tag `vX.Y.Z`, draft a Release; a
+version cannot be re-uploaded, so each release needs a fresh version).
 
 ---
 
