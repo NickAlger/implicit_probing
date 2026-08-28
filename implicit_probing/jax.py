@@ -93,6 +93,10 @@ def _term_value(
 class JaxImplicitProblem:
     """``ImplicitProblem`` for a JAX map ``q(theta) = Q(theta, u(theta))``, frozen at ``(theta0, u0)``.
 
+    To probe the same map at MANY expansion points, reuse one instance via :py:meth:`refreeze`
+    rather than constructing per point -- construction creates the closures that key the jit cache,
+    so per-point instances recompile every jet kernel (and eventually exhaust XLA memory).
+
     Parameters
     ----------
     R : callable
@@ -130,6 +134,43 @@ class JaxImplicitProblem:
         self._forward_solver = forward_solver
         self._adjoint_solver = adjoint_solver
         self._lu = jax.scipy.linalg.lu_factor(self.A) if (forward_solver is None or adjoint_solver is None) else None
+
+    def refreeze(self, theta0, u0, *, forward_solver=None, adjoint_solver=None):
+        """Move the frozen expansion point to ``(theta0, u0)`` IN PLACE, keeping every compiled kernel.
+
+        The jet kernels (``_term_value``) are jitted with the term's *structure* static -- including
+        ``F``, the R-/Q-view closures created in ``__init__`` -- and the expansion point traced. The
+        jit cache is therefore keyed by those closure objects: probing a batch of expansion points
+        wants ONE problem instance refrozen per point. A fresh instance per point recreates the
+        closures, misses the cache, and recompiles every kernel at every point -- and the
+        accumulated compilations exhaust XLA executable memory after a few tens of points.
+
+        As in ``__init__``, the caller supplies a solved point (``u0`` solving ``R(theta0, u) = 0``);
+        nothing is re-solved here, but the linearized operator ``A = d_u R`` is re-assembled and
+        re-factorized. Shapes must match the original problem (the compiled kernels are
+        shape-specialized). A problem built with custom solvers must be given fresh ones (they are
+        specific to the frozen point); the default reused-LU path needs no arguments.
+
+        Returns ``self``, so ``probe(problem.refreeze(x, u), ...)`` reads naturally.
+        """
+        theta0 = jnp.asarray(theta0)
+        u0 = jnp.asarray(u0)
+        if theta0.shape != (self.p,) or u0.shape != (self.n_u,):
+            raise ValueError(f'refreeze shapes {theta0.shape} / {u0.shape} do not match the frozen '
+                             f'problem ({self.p},) / ({self.n_u},); build a new problem instead')
+        if (self._forward_solver is not None or self._adjoint_solver is not None) \
+                and forward_solver is None and adjoint_solver is None:
+            raise ValueError('this problem was built with custom solvers, which are specific to the '
+                             'frozen point; pass fresh forward_solver/adjoint_solver to refreeze')
+        self.theta0 = theta0
+        self.u0 = u0
+        self.w0 = jnp.concatenate([theta0, u0])
+        self.A = jax.jacfwd(lambda u: self.R(theta0, u))(u0)
+        self._forward_solver = forward_solver
+        self._adjoint_solver = adjoint_solver
+        self._lu = (jax.scipy.linalg.lu_factor(self.A)
+                    if (forward_solver is None or adjoint_solver is None) else None)
+        return self
 
     # --- ImplicitProblem interface ---
 

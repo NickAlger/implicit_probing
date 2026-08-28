@@ -112,6 +112,49 @@ class TestJaxProbes(unittest.TestCase):
         self.assertLess(err, 1e-9, f"max adjointness rel err {err:.2e}")
 
 
+class TestRefreeze(unittest.TestCase):
+    """``refreeze`` must be exactly equivalent to fresh construction at the new point -- same map,
+    same machinery, only the (traced) expansion point moved -- while keeping the compiled kernels."""
+
+    def test_refreeze_matches_fresh_construction(self):
+        toy = make_toy_problem(seed=0)
+        jp = _jax_problem_from_toy(toy)
+        a = jnp.asarray([1.0, 0.3])
+        b = jnp.asarray([0.4, -0.6])
+        omega = jnp.asarray([1.0, -0.5])
+        probe(jp, [(a, 2), (b, 1)], omega)              # warm the kernels at the original point
+
+        rng = np.random.default_rng(3)                  # a second point (the equivalence holds
+        theta1 = jnp.asarray(rng.standard_normal(2))    # whether or not it solves R = 0; both
+        u1 = jnp.asarray(rng.standard_normal(3))        # objects run the identical computation)
+        fresh = JaxImplicitProblem(jp.R, jp.Q, theta1, u1)
+        out = jp.refreeze(theta1, u1)
+        self.assertIs(out, jp)                          # returns self (chainable)
+
+        f_re, r_re = probe(jp, [(a, 2), (b, 1)], omega)
+        f_fr, r_fr = probe(fresh, [(a, 2), (b, 1)], omega)
+        self.assertEqual(set(f_re), set(f_fr))
+        for mu in f_fr:
+            np.testing.assert_allclose(np.asarray(f_re[mu]), np.asarray(f_fr[mu]),
+                                       rtol=1e-13, atol=1e-14)
+            np.testing.assert_allclose(np.asarray(r_re[mu]), np.asarray(r_fr[mu]),
+                                       rtol=1e-13, atol=1e-14)
+
+    def test_refreeze_shape_mismatch_raises(self):
+        jp = _jax_problem_from_toy(make_toy_problem(seed=0))
+        with self.assertRaises(ValueError):
+            jp.refreeze(jnp.zeros(3), jnp.zeros(3))     # theta dim is 2
+
+    def test_refreeze_with_stale_custom_solvers_raises(self):
+        toy = make_toy_problem(seed=0)
+        base = _jax_problem_from_toy(toy)
+        custom = JaxImplicitProblem(base.R, base.Q, jnp.asarray(toy.theta0), jnp.asarray(toy.u0),
+                                    forward_solver=base.solve_operator,
+                                    adjoint_solver=base.solve_operator_adjoint)
+        with self.assertRaises(ValueError):             # custom solvers are point-specific
+            custom.refreeze(jnp.asarray(toy.theta0), jnp.asarray(toy.u0))
+
+
 class _CountingProblem:
     """Wraps a problem, counting the linearized solves the driver performs (at the solve boundary)."""
     def __init__(self, inner):

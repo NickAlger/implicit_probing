@@ -6,7 +6,15 @@ All notable changes to `implicit_probing` are documented here. The format follow
 
 ## Unreleased
 
-_Nothing yet._
+### Added
+- **`JaxImplicitProblem.refreeze(theta0, u0)`**: move the frozen expansion point in place, keeping
+  every compiled jet kernel. The kernels are jitted with the R-/Q-view closures static and the
+  point traced, so batch-probing many expansion points needs one reused instance; constructing a
+  fresh instance per point recompiles every kernel at every point and exhausts XLA executable
+  memory after a few tens of points (found while probing a trained deep-equilibrium model at 128
+  sample points: ~3 s/point and an LLVM allocation failure at ~55 points, vs 0.08 s/point with
+  `refreeze`). Custom solvers are point-specific, so a problem built with them must be handed
+  fresh ones. The class docstring now states the reuse rule.
 
 ## 2026.0.0 — 2026-07-10
 
