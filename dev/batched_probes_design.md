@@ -1,7 +1,7 @@
 # Batched probes — design note
 
 *2026-09-02 (Nick + Claude). Status: **design settled and independently reviewed; implemented in all three hooks
-(§11 steps 0–3), downstream T3Polynomial call sites next**. Decisions in §9; the review record — two independent
+(§11 steps 0–3) and adopted by T3Polynomial's call sites**. Remaining follow-ups: §10. Decisions in §9; the review record — two independent
 reviewers, same brief, no shared context, findings folded in below — is §12. Measurements behind
 it: T3Polynomial's `scripts/x03_batched_probe_bench.py` and
 `dev/deq_regime_and_probe_batching_2026_09_02.md` §5, the PETSc checks in §1/§6, and the reviewers'
@@ -336,10 +336,11 @@ bit-identical to a fresh run" promise holds only within one probing mode (batche
   marker (held in reserve, §3).
 - FEniCSx order-≤1 matrix path (§6, phase 2); batched custom-solver callables (`Mat -> Mat`, an
   optional attribute) — less pressing now that `ksp_factory` covers the KSP case.
-- Downstream in T3Polynomial: `n01.generate_jets`, `datagen._generate_one_point`,
-  `reduction.sketch_gradients` become one batched call per point; `darcy.py` passes
-  `ksp_factory=_mumps_lu`; the covariance `apply` / `apply_transpose` need list (FEniCS) or 2-D (jax)
-  support for composed batching; the datagen resume wording (§8).
+- ~~Downstream in T3Polynomial~~ — **done 2026-09-02**: `n01.generate_jets`,
+  `datagen._generate_one_point` and `reduction.sketch_gradients` issue one batched probe per point;
+  `darcy.py` passes `ksp_factory=_mumps_lu`; the covariance, `ReducedInputMap` and both output maps
+  accept `(B, ·)` blocks / lists; the datagen resume wording qualified. Agreement with the old loops
+  at round-off; T3Polynomial's PDE-side and jets tests green.
 
 ## 11. Implementation order
 
@@ -355,7 +356,7 @@ bit-identical to a fresh run" promise holds only within one probing mode (batche
    The slot forms went in with 2a rather than after it, because batched assembly needs per-member
    assembly anyway and the measurement (§6) shows form construction was the dominant cost.
 3. MPI: the batched FEniCSx tests pass under `mpirun -n 2` (assembly included) — **done**.
-   Changelog, docs (`docs/fenics_hook.md`) — **done**. Downstream T3Polynomial call sites — next.
+   Changelog, docs (`docs/fenics_hook.md`) — **done**. Downstream T3Polynomial call sites — **done**.
 
 ## 12. Review record (2026-09-02)
 
