@@ -333,7 +333,15 @@ bit-identical to a fresh run" promise holds only within one probing mode (batche
 ## 10. Out of scope / follow-ups
 
 - **Compiled probe** (JAX): jit the whole lattice walk with the point as an argument — the last ~3–5×
-  (0.9 vs 2.5 ms/probe at B = 1024). Enabling change: the point-as-argument view (§4).
+  (0.96 vs 2.4–2.8 ms/probe at B = 1024). Enabling change: the point-as-argument view (§4).
+  **Where that gap lives (measured 2026-09-02, sync after every kernel, DEQ J = 4):** Python +
+  dispatch is a flat 62–96 ms per call — 7.7 ms/probe at D = 8 but 0.09 ms/probe at D = 1024 — while
+  the 205 kernel calls per probe (195 batched term kernels, 1 single, 9 solves) alone take 2.4–4.2×
+  the outer-jit wall. So the gap is NOT Python overhead: at small D it is XLA's per-executable launch
+  cost (0.85 ms per call on tiny arrays), at large D it is the work itself — each term kernel
+  recomputes its own Taylor-mode jets through R/Q and materializes its result, whereas the fused
+  program shares the point-side evaluations across all terms and nodes and fuses the elementwise
+  chains. Fewer dispatches will not close it; a larger compiled unit will.
 - Bucketing of B; automatic chunking; a hook-level `broadcast(vec, B)` helper; a driver-level `Batch`
   marker (held in reserve, §3).
 - FEniCSx order-≤1 matrix path (§6, phase 2); batched custom-solver callables (`Mat -> Mat`, an
