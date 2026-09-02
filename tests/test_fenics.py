@@ -18,7 +18,7 @@ import dolfinx.fem.petsc as petsc_fem
 from petsc4py import PETSc
 
 from implicit_probing.driver import probe
-from implicit_probing.fenics import FenicsImplicitProblem
+from implicit_probing.fenics import FenicsImplicitProblem, direct_lu
 from implicit_probing import validation
 
 
@@ -239,13 +239,26 @@ class TestFenicsBatchedProbes(unittest.TestCase):
         self.assertEqual(counting.n_forward, L - 1)
         self.assertEqual(counting.n_adjoint, L)
 
-    def test_ksp_factory_mumps_matches(self):
-        # The injected KSP carries the batched solves (the factor-traversal win for direct solvers).
+    def test_default_solver_is_direct_lu_mumps_where_available(self):
+        # The default is a direct factorization: MUMPS if this PETSc build has it, else native LU.
+        expected = "mumps" if PETSc.Sys.hasExternalPackage("mumps") else "petsc"
+        self.assertEqual(direct_lu().package, expected)
+        self.assertEqual(self.prob._ksp.getType(), "preonly")
+        self.assertEqual(self.prob._ksp.getPC().getType(), "lu")
+        self.assertEqual(self.prob._ksp.getPC().getFactorSolverType(), expected)
+
+    def test_ksp_factory_choices_agree(self):
+        # An injected factory carries the batched solves; a hand-written MUMPS factory, the library's
+        # direct_lu('mumps'), and native LU via direct_lu('petsc') all give the same probes.
         p = self.prob
-        pm = FenicsImplicitProblem(p.R_form, p.Q_form, p.theta, p.u, bcs=p.bcs, ksp_factory=_mumps_factory)
-        self.assertEqual(pm._ksp.getPC().getFactorSolverType(), "mumps")
-        self._check([(self.D, 2)], self.OMS, lambda j: [(self.D[j], 2)], lambda j: self.OMS[j],
-                    fwd_batched=lambda mu: mu[0] >= 1, rev_batched=lambda mu: True, problem=pm)
+        factories = {"hand-written mumps": _mumps_factory, "direct_lu('mumps')": direct_lu("mumps")}
+        if MPI.COMM_WORLD.size == 1:                       # PETSc's native LU is sequential only
+            factories["direct_lu('petsc')"] = direct_lu("petsc")
+        for name, factory in factories.items():
+            with self.subTest(factory=name):
+                pf = FenicsImplicitProblem(p.R_form, p.Q_form, p.theta, p.u, bcs=p.bcs, ksp_factory=factory)
+                self._check([(self.D, 2)], self.OMS, lambda j: [(self.D[j], 2)], lambda j: self.OMS[j],
+                            fwd_batched=lambda mu: mu[0] >= 1, rev_batched=lambda mu: True, problem=pf)
 
     def test_custom_solvers_take_the_per_member_loop(self):
         p = self.prob

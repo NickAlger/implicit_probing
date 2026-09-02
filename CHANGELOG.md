@@ -27,11 +27,20 @@ All notable changes to `implicit_probing` are documented here. The format follow
   under `mpirun -n 2`. Measured on a mixed-form Darcy problem (18k dofs, MUMPS, J = 4, B = 64): 3.1×
   per probe over the loop, whose cost was dominated by per-probe form construction. Design, review
   record and measurements: `dev/batched_probes_design.md`.
-- **`FenicsImplicitProblem(..., ksp_factory=...)`**: a `PETSc.Mat -> PETSc.KSP` callable that builds
-  the hook's solver on the assembled operator (MUMPS for saddle-point operators, options-database
-  configured KSPs, iterative solvers). Default unchanged (PETSc's default LU). Custom
-  `forward_solver` / `adjoint_solver` callables still take precedence and are applied per member in
-  a batched probe.
+- **`FenicsImplicitProblem(..., ksp_factory=...)`** and **`fenics.direct_lu(package=None)`**: a
+  `PETSc.Mat -> PETSc.KSP` callable builds the hook's linear solver on the assembled operator (a
+  PETSc `KSP` is the solver object for direct and iterative solves alike); `direct_lu` builds the
+  factory for any direct factor package. Custom `forward_solver` / `adjoint_solver` callables still
+  take precedence and are applied per member in a batched probe.
+
+### Changed
+- **The FEniCSx hook's default solver is now a direct LU with MUMPS where PETSc has it**, falling back
+  to PETSc's native LU otherwise (`direct_lu()`). Native LU does not pivot (silent NaN on indefinite
+  saddle-point operators) and does not run under MPI; MUMPS does both. Existing runs on the old
+  default change at round-off (different ordering and pivoting); on small serial problems native LU
+  is faster per single solve, and multithreaded MUMPS is reproducible only to round-off run to run
+  (~1e-17) -- pass `ksp_factory=direct_lu('petsc')` (or set `OMP_NUM_THREADS=1`) to keep bit-identical
+  reruns.
 - **`JaxImplicitProblem.refreeze(theta0, u0)`**: move the frozen expansion point in place, keeping
   every compiled jet kernel. The kernels are jitted with the R-/Q-view closures static and the
   point traced, so multi-point probing (many expansion points) needs one reused instance; constructing a
@@ -41,7 +50,6 @@ All notable changes to `implicit_probing` are documented here. The format follow
   `refreeze`). Custom solvers are point-specific, so a problem built with them must be handed
   fresh ones. The class docstring now states the reuse rule.
 
-### Changed
 - Nomenclature: *batch* now means B probes at ONE expansion point (the feature above); probing many
   expansion points is *multi-point* probing (the `refreeze` loop). The `refreeze` docstring and the
   entry above were reworded accordingly. The `refreeze` docstring also warns against wrapping

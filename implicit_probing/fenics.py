@@ -8,7 +8,9 @@ solves the nonlinear state equation ``R(theta, u) = 0`` themselves (by whatever 
 Dirichlet BCs) and hands the solved Functions to this class, which then provides derivative probes at
 that point. The class never does a nonlinear solve. It assembles the linearized state operator
 ``A = d_u R`` once (with *homogenized* Dirichlet BCs), factorizes it (or uses user-supplied solvers),
-and turns each ``PartialTerm`` into a single UFL form.
+and turns each ``PartialTerm`` into a single UFL form. The default solver is a direct LU
+factorization, MUMPS where PETSc has it (pivoting, MPI) and PETSc's native LU otherwise
+(``direct_lu``); ``ksp_factory`` swaps in any other PETSc solver, direct or iterative.
 
 The whole hook is one uniform recipe (``_term_form``): take the base form (``R`` or ``Q``, each a
 1-form in its output test function), optionally **replace** that test function with the pairing
@@ -34,10 +36,9 @@ Functions in the same call are shared by every member. Results come back as list
 they depend on a batched input (``forward[mu]`` iff a batched direction has ``mu_k >= 1``;
 ``reverse[mu]`` iff ``omega`` is batched or such a direction exists), and as single Vecs otherwise
 -- ``forward[(0, ..)] = q(theta0)`` is always a single Vec, and so is the gradient ``reverse[(0, ..)]``
-under direction-only batching. Which KSP the batched solve uses is the caller's choice via
-``ksp_factory`` (e.g. MUMPS for a saddle-point operator, or any solver configured through the PETSc
-options database); user-supplied ``forward_solver`` / ``adjoint_solver`` callables keep their
-``Vec -> Vec`` contract and are applied per member.
+under direction-only batching. The batched solve runs on the hook's solver: the default direct LU
+(MUMPS where available), or whatever ``ksp_factory`` builds; user-supplied ``forward_solver`` /
+``adjoint_solver`` callables keep their ``Vec -> Vec`` contract and are applied per member.
 
 This module imports ``dolfinx`` and is therefore an OPTIONAL part of implicit_probing (the core
 package needs only numpy). It requires a conda DOLFINx environment.
@@ -54,16 +55,36 @@ import dolfinx.fem.petsc as petsc_fem
 from implicit_probing.batching import infer_batch_size
 from implicit_probing.driver import OMEGA
 
-__all__ = ['FenicsImplicitProblem']
+__all__ = ['FenicsImplicitProblem', 'direct_lu']
 
 
-def _lu_solver(A: PETSc.Mat) -> PETSc.KSP:
-    """A reusable LU solver for A: factorized once on first solve, reused for all subsequent solves."""
-    ksp = PETSc.KSP().create(A.getComm())
-    ksp.setOperators(A)
-    ksp.setType("preonly")
-    ksp.getPC().setType("lu")
-    return ksp
+def direct_lu(package: typ.Optional[str] = None):
+    """A ``ksp_factory`` for a direct LU solver: ``A -> PETSc.KSP`` (type ``preonly`` + ``lu``), the
+    factorization computed once on the first solve and reused for every forward and transpose solve.
+
+    ``package`` names PETSc's factor package (``'mumps'``, ``'superlu_dist'``, ``'umfpack'``, ...).
+    ``None`` -- the hook's default -- means **MUMPS if this PETSc build has it, else PETSc's native
+    LU**. MUMPS pivots (PETSc's native LU does not, and silently returns NaN on an indefinite
+    saddle-point operator) and runs under MPI (native LU is sequential only); on small serial
+    problems native LU is the faster of the two per solve.
+
+    Terminology: a PETSc ``KSP`` is the linear-solver *object*, for direct and iterative solves
+    alike -- a direct solve is the ``preonly`` KSP whose preconditioner is the factorization. So
+    ``ksp_factory`` is not asking for a Krylov method; iterative solvers are one thing it can build.
+    """
+    if package is None:
+        package = 'mumps' if PETSc.Sys.hasExternalPackage('mumps') else 'petsc'
+
+    def factory(A: PETSc.Mat) -> PETSc.KSP:
+        ksp = PETSc.KSP().create(A.getComm())
+        ksp.setOperators(A)
+        ksp.setType("preonly")
+        ksp.getPC().setType("lu")
+        ksp.getPC().setFactorSolverType(package)
+        return ksp
+
+    factory.package = package                    # introspectable: which package the default resolved to
+    return factory
 
 
 class FenicsImplicitProblem:
@@ -82,15 +103,18 @@ class FenicsImplicitProblem:
         every incremental right-hand side.
     forward_solver, adjoint_solver : callable | None
         Optional custom solvers, each mapping a RHS ``PETSc.Vec`` to the solution ``PETSc.Vec``. If
-        omitted, the KSP from ``ksp_factory`` is used (adjoint via its transpose solve). In a batched
-        probe a custom solver is applied per member (it keeps its single-vector contract and does not
-        get the multi-right-hand-side solve).
+        omitted, the solver from ``ksp_factory`` is used (adjoint via its transpose solve). In a
+        batched probe a custom solver is applied per member (it keeps its single-vector contract and
+        does not get the multi-right-hand-side solve).
     ksp_factory : callable | None
-        ``PETSc.Mat -> PETSc.KSP``: builds the solver for the assembled operator ``A`` (called once).
-        Default: a reused LU factorization with PETSc's default factor package. Pass your own to
-        choose the solver -- e.g. MUMPS for a saddle-point operator, or a KSP configured through the
-        PETSc options database -- and batched probes solve all B right-hand sides through it at once
-        (``KSP.matSolve``). Ignored when both custom solvers are given.
+        ``PETSc.Mat -> PETSc.KSP``: builds the linear solver for the assembled operator ``A`` (called
+        once). A PETSc ``KSP`` is the solver object for direct AND iterative solves. **Default:
+        ``direct_lu()`` -- a direct LU factorization, MUMPS if this PETSc build has it, else PETSc's
+        native LU** (sequential, unpivoted), computed once and reused. Pass ``direct_lu('superlu_dist')``
+        for another factor package, or your own factory for a Krylov solver + preconditioner or a
+        KSP configured through the PETSc options database. Batched probes solve all B right-hand
+        sides through this solver at once (``KSP.matSolve``). Ignored when both custom solvers are
+        given.
     """
 
     def __init__(self, R_form, Q_form, theta, u, bcs=None,
@@ -115,7 +139,7 @@ class FenicsImplicitProblem:
 
         self._forward_solver = forward_solver
         self._adjoint_solver = adjoint_solver
-        factory = ksp_factory if ksp_factory is not None else _lu_solver
+        factory = ksp_factory if ksp_factory is not None else direct_lu()
         self._ksp = factory(self.A) if (forward_solver is None or adjoint_solver is None) else None
 
     # --- ImplicitProblem interface ---

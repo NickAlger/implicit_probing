@@ -208,9 +208,10 @@ and the open-slot + adjoint-pairing case. Solves: `np.linalg.solve(A, b.T).T` �
   1.2× native-LU row for the default and **nothing for Darcy** (closures take the loop fallback), and
   native LU does not run under MPI at all (PETSc error 92). Fix: `FenicsImplicitProblem(...,
   ksp_factory=None)` — a callable `PETSc.Mat -> PETSc.KSP` invoked on the assembled `A` (exactly the
-  shape of Darcy's `_mumps_lu`), default = the current `_lu_solver` (unchanged, so the unbatched path
-  and existing users are untouched; no `setFromOptions` added to the default — users wanting options
-  pass a factory). Precedence: explicit `forward_solver`/`adjoint_solver` callables win (per-member
+  shape of Darcy's `_mumps_lu`). *First shipped with the default unchanged (native LU); then, on
+  Nick's ruling, the default became `direct_lu()`: MUMPS where `PETSc.Sys.hasExternalPackage('mumps')`,
+  native LU otherwise — pivoting and MPI over the serial single-solve speed of native LU.* No
+  `setFromOptions` on the default — users wanting options pass a factory. Precedence: explicit `forward_solver`/`adjoint_solver` callables win (per-member
   loop, `Vec -> Vec` contract kept); else the factory's KSP; else the default KSP. Darcy switches to
   `ksp_factory=_mumps_lu` and gets the 10× row; cubic Poisson may do the same for MPI. The §6 draft
   sentence "options set through the PETSc options database keep applying" was false and is withdrawn.
@@ -324,7 +325,8 @@ bit-identical to a fresh run" promise holds only within one probing mode (batche
 | hooks | **all three**: JAX, numpy reference, FEniCSx |
 | batch-size changes | recompile accepted; **no bucketing** for now |
 | solver generality (FEniCSx) | via `KSP.matSolve` / `matSolveTranspose` on the hook's KSP — any solver, no option removed |
-| FEniCSx solver injection | **`ksp_factory`** (`PETSc.Mat -> PETSc.KSP`), phase 1; default unchanged; explicit callables keep the loop fallback |
+| FEniCSx solver injection | **`ksp_factory`** (`PETSc.Mat -> PETSc.KSP`), phase 1; explicit callables keep the loop fallback |
+| FEniCSx default solver (Nick, 2026-09-02, after implementation) | **direct LU, MUMPS where PETSc has it, native LU fallback** (`direct_lu()`); "KSP" means PETSc's solver object, direct or iterative -- the name stays, the docs say so |
 | chunking | caller's responsibility, documented (fixed size, pad the last chunk) |
 | driver | untouched |
 

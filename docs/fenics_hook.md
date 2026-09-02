@@ -79,31 +79,36 @@ from the request itself, so the driver stays boundary-condition agnostic.
 
 ## Solvers
 
-By default `A` is LU-factorized once and reused for every probe — forward solves use the
-factorization, adjoint solves use its transpose solve. For large problems, pass `forward_solver`
-and/or `adjoint_solver` (callables mapping a RHS `PETSc.Vec` to the solution `PETSc.Vec`) to plug in
-your own Krylov solver and preconditioner.
+**The default is a direct LU factorization**: `A = d_u R` is factorized once and the factors are
+reused for every probe — forward solves use them, adjoint solves use the transpose solve. The factor
+package is **MUMPS when your PETSc build has it, otherwise PETSc's native LU**. MUMPS pivots (native
+LU does not, and on an indefinite saddle-point operator it silently returns NaN) and runs under MPI
+(native LU is sequential only); on small serial problems native LU is the faster per single solve.
+`direct_lu().package` tells you which one the default resolved to. One consequence of the default:
+MUMPS's multithreaded factorization is reproducible only to round-off run to run (~1e-17 measured);
+for bit-identical reruns use `OMP_NUM_THREADS=1` or `ksp_factory=direct_lu("petsc")`.
 
-## Choosing the solver: `ksp_factory`
-
-By default the hook LU-factorizes `A = d_u R` once with PETSc's default factor package and reuses it
-for every probe. To choose the solver yourself, pass `ksp_factory`, a callable `PETSc.Mat -> PETSc.KSP`
-that the hook calls once on the assembled operator — MUMPS for a saddle-point operator that needs
-pivoting, a KSP configured through the PETSc options database, an iterative solver with your
-preconditioner:
+To choose the solver yourself, pass `ksp_factory`: a callable `PETSc.Mat -> PETSc.KSP` that the hook
+calls once on the assembled operator. A PETSc `KSP` is the linear-solver *object*, for direct and
+iterative solves alike — a direct solve is the `preonly` KSP whose preconditioner is the
+factorization — so the parameter is not asking for a Krylov method. `direct_lu(package)` builds a
+factory for any direct package; for an iterative solver, write the KSP yourself:
 
 ```python
-def mumps(A):
-    ksp = PETSc.KSP().create(A.getComm()); ksp.setOperators(A)
-    ksp.setType("preonly"); ksp.getPC().setType("lu"); ksp.getPC().setFactorSolverType("mumps")
-    return ksp
+from implicit_probing.fenics import FenicsImplicitProblem, direct_lu
 
-problem = FenicsImplicitProblem(R_form, Q_form, theta0, u0, bcs=bcs, ksp_factory=mumps)
+problem = FenicsImplicitProblem(R_form, Q_form, theta0, u0, bcs=bcs)                         # MUMPS LU (default)
+problem = FenicsImplicitProblem(..., ksp_factory=direct_lu("superlu_dist"))                    # another direct package
+
+def gmres_ilu(A):                                                                              # an iterative solver
+    ksp = PETSc.KSP().create(A.getComm()); ksp.setOperators(A)
+    ksp.setType("gmres"); ksp.getPC().setType("ilu"); ksp.setTolerances(rtol=1e-12)
+    return ksp
+problem = FenicsImplicitProblem(..., ksp_factory=gmres_ilu)
 ```
 
 `forward_solver` / `adjoint_solver` callables (`Vec -> Vec`) still work and take precedence, but the
-KSP route is the one batched probes can exploit (next section). Native PETSc LU does not run under
-MPI, so a parallel run needs a factory (MUMPS, SuperLU_dist, ...) in any case.
+factory route is the one batched probes exploit (next section).
 
 ## Batched probes
 
@@ -151,9 +156,8 @@ Rules:
   batched probes must map a `(B, m)` block to a list of B Functions and a list of B Vecs back to a
   `(B, m)` block (`tests/test_fenics_composition.py` shows the pattern).
 
-Measured on T3Polynomial's mixed-form Darcy problem at nx = 60 (18k state dofs, MUMPS via
-`ksp_factory`), J = 4, B = 64, laptop, one batched probe versus a loop of 64 single probes, agreeing to
-`2e-13`:
+Measured on T3Polynomial's mixed-form Darcy problem at nx = 60 (18k state dofs, MUMPS LU), J = 4,
+B = 64, laptop, one batched probe versus a loop of 64 single probes, agreeing to `2e-13`:
 
 | | wall | form construction etc. | mesh integration (assembly calls) | linear solves |
 |---|---|---|---|---|
