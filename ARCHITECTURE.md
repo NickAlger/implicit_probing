@@ -160,3 +160,11 @@ each split into labelled probing / problem-setup / verification sections. User-f
 `docs/overview.md` (+ `docs/fenics_hook.md`, `docs/jax_hook.md`, `docs/composition.md`). Full suite
 green (`pytest tests/ -q`). No core algorithm work remains; no framework hook is outstanding. See
 `dev/HANDOFF.md` for status and `dev/RELEASE_CHECKLIST.md` for the path to a public release.
+
+**Batched probes (2026-09):** a batch of B `(direction set, omega)` probes at one expansion point is
+a single vector type — a leading batch axis for the array hooks, a `list` for FEniCSx — so the driver
+is untouched and each hook implements the three protocol methods for it: one lattice walk, one
+multi-right-hand-side solve per node, results batched per key wherever they depend on a batched
+input. `batching.py` holds the one shared rule (the batch size of a request, `omega` counting only
+through `OMEGA` pairings). Design, decisions, independent review and measurements:
+`dev/batched_probes_design.md`; user contract: `docs/jax_hook.md` / `docs/fenics_hook.md`.

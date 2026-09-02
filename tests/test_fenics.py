@@ -135,5 +135,141 @@ class TestFenicsProbes(unittest.TestCase):
         self.assertLess(err, 1e-8, f"max adjointness rel err {err:.2e}")
 
 
+class _CountingProblem:
+    """Counts the driver's solves at the ``solve_operator`` boundary (a batched solve counts once)."""
+    def __init__(self, inner):
+        self.inner = inner
+        self.n_forward = 0
+        self.n_adjoint = 0
+
+    def solve_operator(self, b):
+        self.n_forward += 1
+        return self.inner.solve_operator(b)
+
+    def solve_operator_adjoint(self, c):
+        self.n_adjoint += 1
+        return self.inner.solve_operator_adjoint(c)
+
+    def assemble_partial_sum(self, terms, omega):
+        return self.inner.assemble_partial_sum(terms, omega)
+
+
+def _mumps_factory(A):
+    ksp = PETSc.KSP().create(A.getComm())
+    ksp.setOperators(A)
+    ksp.setType("preonly")
+    ksp.getPC().setType("lu")
+    ksp.getPC().setFactorSolverType("mumps")
+    return ksp
+
+
+class TestFenicsBatchedProbes(unittest.TestCase):
+    """The batched contract for the DOLFINx hook (``dev/batched_probes_design.md``): a LIST of B
+    Functions in place of a direction or of ``omega`` is a batch of B probes at the frozen point --
+    one lattice walk, one multi-right-hand-side ``KSP.matSolve`` per node, the combined form built once
+    per request with slot coefficients. Results are lists of Vecs exactly where they depend on a
+    batched input (per key), single Vecs otherwise. Checked member-by-member against a loop of
+    single probes; solve counts stay per node; the KSP-factory path (MUMPS) and the custom-solver
+    loop fallback give the same answers."""
+    B = 3
+
+    @classmethod
+    def setUpClass(cls):
+        cls.ctx = _build_problem()
+        cls.prob = cls.ctx["problem"]
+        V, cls.omega = cls.ctx["V_theta"], cls.ctx["omega"]
+        cls.D = [_direction(V, lambda xx, k=k: np.sin((k + 1) * np.pi * xx[0]) * np.cos((k + 2) * np.pi * xx[1]) + 0.3 * k)
+                 for k in range(cls.B)]                       # a batch of B directions (a list)
+        cls.b = _direction(V, lambda xx: np.cos(np.pi * xx[0]) * np.sin(2 * np.pi * xx[1]))   # single
+        Vq = cls.omega.function_space
+        cls.OMS = []
+        for k in range(cls.B):                                # a batch of B output functionals
+            f = fem.Function(Vq)
+            f.interpolate(lambda xx, k=k: np.sin((k + 1) * np.pi * xx[0]) + 0.1 * k)
+            cls.OMS.append(f)
+
+    @staticmethod
+    def _arr(v):
+        return np.asarray(v.array)
+
+    def _check(self, directions, omega, directions_of, omega_of, fwd_batched, rev_batched, problem=None):
+        problem = self.prob if problem is None else problem
+        forward, reverse = probe(problem, directions, omega)
+        loops = [probe(problem, directions_of(j), omega_of(j)) for j in range(self.B)]
+        self.assertEqual(set(forward), set(loops[0][0]))
+        for mu in forward:
+            for family, got, ref, batched in (
+                    ("forward", forward[mu], [l[0][mu] for l in loops], fwd_batched(mu)),
+                    ("reverse", reverse[mu], [l[1][mu] for l in loops], rev_batched(mu))):
+                with self.subTest(family=family, mu=mu):
+                    if batched:
+                        self.assertIsInstance(got, list, f"{family}{mu} should be a batch")
+                        self.assertEqual(len(got), self.B)
+                        for j in range(self.B):
+                            np.testing.assert_allclose(self._arr(got[j]), self._arr(ref[j]), rtol=1e-11, atol=1e-13)
+                    else:                                     # a single Vec shared by every member
+                        self.assertIsInstance(got, PETSc.Vec, f"{family}{mu} should be single")
+                        for j in range(self.B):
+                            np.testing.assert_allclose(self._arr(got), self._arr(ref[j]), rtol=1e-11, atol=1e-13)
+
+    def test_batched_directions_shared_omega(self):
+        # direction-only batching: q(theta0) and the gradient reverse[(0,)] stay single Vecs
+        self._check([(self.D, 2)], self.omega, lambda j: [(self.D[j], 2)], lambda j: self.omega,
+                    fwd_batched=lambda mu: mu[0] >= 1, rev_batched=lambda mu: mu[0] >= 1)
+
+    def test_batched_omega_shared_direction(self):
+        self._check([(self.b, 2)], self.OMS, lambda j: [(self.b, 2)], lambda j: self.OMS[j],
+                    fwd_batched=lambda mu: False, rev_batched=lambda mu: True)
+
+    def test_mixed_request_is_batched_per_key(self):
+        self._check([(self.D, 2), (self.b, 1)], self.OMS,
+                    lambda j: [(self.D[j], 2), (self.b, 1)], lambda j: self.OMS[j],
+                    fwd_batched=lambda mu: mu[0] >= 1, rev_batched=lambda mu: True)
+
+    def test_gradient_sketch_shape(self):
+        forward, reverse = probe(self.prob, [], self.OMS)     # B gradients, one adjoint matSolve
+        self.assertIsInstance(forward[()], PETSc.Vec)
+        self.assertIsInstance(reverse[()], list)
+        self.assertEqual(len(reverse[()]), self.B)
+
+    def test_solve_counts_are_per_node(self):
+        counting = _CountingProblem(self.prob)
+        probe(counting, [(self.D, 2), (self.b, 1)], self.OMS)
+        L = 3 * 2
+        self.assertEqual(counting.n_forward, L - 1)
+        self.assertEqual(counting.n_adjoint, L)
+
+    def test_ksp_factory_mumps_matches(self):
+        # The injected KSP carries the batched solves (the factor-traversal win for direct solvers).
+        p = self.prob
+        pm = FenicsImplicitProblem(p.R_form, p.Q_form, p.theta, p.u, bcs=p.bcs, ksp_factory=_mumps_factory)
+        self.assertEqual(pm._ksp.getPC().getFactorSolverType(), "mumps")
+        self._check([(self.D, 2)], self.OMS, lambda j: [(self.D[j], 2)], lambda j: self.OMS[j],
+                    fwd_batched=lambda mu: mu[0] >= 1, rev_batched=lambda mu: True, problem=pm)
+
+    def test_custom_solvers_take_the_per_member_loop(self):
+        p = self.prob
+        seen = []
+        def fwd(bvec):
+            self.assertIsInstance(bvec, PETSc.Vec); seen.append("f")
+            x = bvec.duplicate(); p._ksp.solve(bvec, x); return x
+        def adj(cvec):
+            self.assertIsInstance(cvec, PETSc.Vec); seen.append("a")
+            x = cvec.duplicate(); p._ksp.solveTranspose(cvec, x); return x
+        pc = FenicsImplicitProblem(p.R_form, p.Q_form, p.theta, p.u, bcs=p.bcs,
+                                   forward_solver=fwd, adjoint_solver=adj)
+        self._check([(self.D, 2)], self.omega, lambda j: [(self.D[j], 2)], lambda j: self.omega,
+                    fwd_batched=lambda mu: mu[0] >= 1, rev_batched=lambda mu: mu[0] >= 1, problem=pc)
+        self.assertTrue(seen)                                  # the callables were used
+
+    def test_batch_size_mismatch_raises(self):
+        with self.assertRaises(ValueError):
+            probe(self.prob, [(self.D, 1)], self.OMS[:2])
+
+    def test_tuple_is_refused(self):
+        with self.assertRaises(TypeError):
+            probe(self.prob, [(tuple(self.D), 1)], self.omega)
+
+
 if __name__ == "__main__":
     unittest.main()

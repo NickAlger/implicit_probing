@@ -22,16 +22,36 @@ Mixed function spaces are used deliberately (e.g. theta in CG2, u in CG3, the ob
 function in CG1) so that any accidental conflation of the parameter, state, and observation spaces
 fails loudly rather than silently.
 
+**Batched probes** (``dev/batched_probes_design.md``): a Python ``list`` of B Functions in place of a
+direction (or of ``omega``) is a *batch* -- B independent probes at the frozen point in ONE ``probe``
+call. The lattice is walked once; per node the B right-hand sides are assembled into one dense
+PETSc matrix and solved together (``KSP.matSolve`` / ``matSolveTranspose`` on the hook's own KSP --
+a direct solver traverses its factorization once for all B, an iterative one loops internally);
+and the combined UFL form of a request is built ONCE with *slot* coefficient Functions, then
+re-assembled per member after copying that member's dofs into the slots (the ffcx kernel and the
+form construction are shared; the integration over the mesh is still done B times). Single
+Functions in the same call are shared by every member. Results come back as lists of Vecs wherever
+they depend on a batched input (``forward[mu]`` iff a batched direction has ``mu_k >= 1``;
+``reverse[mu]`` iff ``omega`` is batched or such a direction exists), and as single Vecs otherwise
+-- ``forward[(0, ..)] = q(theta0)`` is always a single Vec, and so is the gradient ``reverse[(0, ..)]``
+under direction-only batching. Which KSP the batched solve uses is the caller's choice via
+``ksp_factory`` (e.g. MUMPS for a saddle-point operator, or any solver configured through the PETSc
+options database); user-supplied ``forward_solver`` / ``adjoint_solver`` callables keep their
+``Vec -> Vec`` contract and are applied per member.
+
 This module imports ``dolfinx`` and is therefore an OPTIONAL part of implicit_probing (the core
 package needs only numpy). It requires a conda DOLFINx environment.
 """
+import dataclasses
 import typing as typ
 
+import numpy as np
 import ufl
 from petsc4py import PETSc
 from dolfinx import fem
 import dolfinx.fem.petsc as petsc_fem
 
+from implicit_probing.batching import infer_batch_size
 from implicit_probing.driver import OMEGA
 
 __all__ = ['FenicsImplicitProblem']
@@ -62,11 +82,19 @@ class FenicsImplicitProblem:
         every incremental right-hand side.
     forward_solver, adjoint_solver : callable | None
         Optional custom solvers, each mapping a RHS ``PETSc.Vec`` to the solution ``PETSc.Vec``. If
-        omitted, a single reused LU factorization of ``A`` is used (adjoint via its transpose solve).
+        omitted, the KSP from ``ksp_factory`` is used (adjoint via its transpose solve). In a batched
+        probe a custom solver is applied per member (it keeps its single-vector contract and does not
+        get the multi-right-hand-side solve).
+    ksp_factory : callable | None
+        ``PETSc.Mat -> PETSc.KSP``: builds the solver for the assembled operator ``A`` (called once).
+        Default: a reused LU factorization with PETSc's default factor package. Pass your own to
+        choose the solver -- e.g. MUMPS for a saddle-point operator, or a KSP configured through the
+        PETSc options database -- and batched probes solve all B right-hand sides through it at once
+        (``KSP.matSolve``). Ignored when both custom solvers are given.
     """
 
     def __init__(self, R_form, Q_form, theta, u, bcs=None,
-                 forward_solver=None, adjoint_solver=None):
+                 forward_solver=None, adjoint_solver=None, ksp_factory=None):
         self.R_form = R_form
         self.Q_form = Q_form
         self.theta = theta
@@ -87,23 +115,34 @@ class FenicsImplicitProblem:
 
         self._forward_solver = forward_solver
         self._adjoint_solver = adjoint_solver
-        self._ksp = _lu_solver(self.A) if (forward_solver is None or adjoint_solver is None) else None
+        factory = ksp_factory if ksp_factory is not None else _lu_solver
+        self._ksp = factory(self.A) if (forward_solver is None or adjoint_solver is None) else None
 
     # --- ImplicitProblem interface ---
 
     def solve_operator(self, b):
-        """Solve A x = b (homogenized BCs); return the incremental state as a Function in V_u."""
-        return self._wrap(self._solve(b, transpose=False))
+        """Solve A x = b (homogenized BCs); return the incremental state as a Function in V_u.
+        A batch (a list of B right-hand sides) is one multi-right-hand-side solve -> a list of B."""
+        return self._solve_any(b, transpose=False)
 
     def solve_operator_adjoint(self, c):
-        """Solve A* x = c; return the incremental adjoint as a Function in V_u."""
-        return self._wrap(self._solve(c, transpose=True))
+        """Solve A* x = c; return the incremental adjoint as a Function in V_u (a list for a batch)."""
+        return self._solve_any(c, transpose=True)
 
     def assemble_partial_sum(self, terms, omega):
         """Assemble sum_i terms[i] as one combined UFL form, then one PETSc vector.
 
-        OMEGA pairings are resolved to ``omega`` (a Function in the observation space ``V_q``).
+        OMEGA pairings are resolved to ``omega`` (a Function in the observation space ``V_q``). A
+        batched request (a list among the vectors it uses; see the module docstring) returns a list
+        of B vectors: the combined form is built once with slot coefficients and assembled per member.
         """
+        B = infer_batch_size(terms, omega, _list_batch_size)
+        if B is None:
+            return self._assemble_single(terms, omega)
+        return self._assemble_batched(terms, omega, B)
+
+    def _assemble_single(self, terms, omega):
+        """One (unbatched) request: the original path, unchanged."""
         combined = None
         for t in terms:
             form = self._term_form(t, omega)
@@ -112,14 +151,62 @@ class FenicsImplicitProblem:
             form = t.coefficient * form
             combined = form if combined is None else combined + form
         if combined is None:                     # every term vanished -> zero vector in the target space
-            return fem.Function(self._target_space(terms[0])).x.petsc_vec.copy()
+            return self._zero_vector(terms[0])
+        return self._assemble(fem.form(combined), self._is_state_rhs(terms[0]))
 
-        vec = petsc_fem.assemble_vector(fem.form(combined))
+    def _assemble_batched(self, terms, omega, B):
+        """A batched request: build the combined form ONCE with a slot Function standing in for every
+        batched list (one slot per distinct list; single Functions enter directly -- broadcast), then
+        per member copy that member's dofs into the slots and assemble. Returns a list of B Vecs."""
+        slots = {}                               # id(list) -> (slot Function, the list)
+
+        def slot_for(vec, space):
+            if not isinstance(vec, list):
+                return vec                       # single Function: shared by every member
+            key = id(vec)
+            if key not in slots:
+                slots[key] = (fem.Function(space), vec)
+            return slots[key][0]
+
+        combined = None
+        for t in terms:
+            t_slotted = dataclasses.replace(
+                t,
+                theta_dirs=tuple((slot_for(d, self.V_theta), m) for d, m in t.theta_dirs),
+                u_vecs=tuple((slot_for(v, self.V_u), m) for v, m in t.u_vecs),
+                pairing=(t.pairing if (t.pairing is None or t.pairing is OMEGA)
+                         else slot_for(t.pairing, self.V_u)))
+            # omega enters (and gets its slot) only through terms that pair with it -- the driver hands
+            # it to every request, and a request that never uses it must not depend on its batch size
+            omega_t = slot_for(omega, self.V_q) if (t.pairing is OMEGA and omega is not None) else None
+            form = self._term_form(t_slotted, omega_t)
+            if form.empty():
+                continue
+            form = t.coefficient * form
+            combined = form if combined is None else combined + form
+        if combined is None:
+            return [self._zero_vector(terms[0]) for _ in range(B)]
+
+        compiled = fem.form(combined)            # compiled once; coefficients are the slots
+        is_rhs = self._is_state_rhs(terms[0])
+        out = []
+        for j in range(B):
+            for slot, members in slots.values():
+                slot.x.array[:] = members[j].x.array          # owned + ghost dofs, same space/layout
+            out.append(self._assemble(compiled, is_rhs))
+        return out
+
+    def _assemble(self, compiled_form, is_state_rhs):
+        """Assemble one compiled form into a fresh ghosted Vec (the ghost-reduce / BC recipe)."""
+        vec = petsc_fem.assemble_vector(compiled_form)
         vec.ghostUpdate(addv=PETSc.InsertMode.ADD, mode=PETSc.ScatterMode.REVERSE)
-        if self._is_state_rhs(terms[0]):         # b_beta / c_beta -> homogenized BCs; probe outputs -> not
+        if is_state_rhs:                         # b_beta / c_beta -> homogenized BCs; probe outputs -> not
             petsc_fem.set_bc(vec, self.bcs)
             vec.ghostUpdate(addv=PETSc.InsertMode.INSERT, mode=PETSc.ScatterMode.FORWARD)
         return vec
+
+    def _zero_vector(self, term):
+        return fem.Function(self._target_space(term)).x.petsc_vec.copy()
 
     # --- internals ---
 
@@ -159,6 +246,15 @@ class FenicsImplicitProblem:
             return self.V_u
         return self.V_u if t.function == 'R' else self.V_q
 
+    def _solve_any(self, b, transpose):
+        """Dispatch: a single Vec -> a Function; a list of B Vecs -> a list of B Functions."""
+        if isinstance(b, list):
+            custom = self._adjoint_solver if transpose else self._forward_solver
+            if custom is not None:               # loop fallback: the callable keeps its Vec -> Vec contract
+                return [self._wrap(custom(b_j)) for b_j in b]
+            return self._solve_batch(b, transpose)
+        return self._wrap(self._solve(b, transpose))
+
     def _solve(self, b, transpose):
         custom = self._adjoint_solver if transpose else self._forward_solver
         if custom is not None:
@@ -170,9 +266,49 @@ class FenicsImplicitProblem:
             self._ksp.solve(b, x)
         return x
 
+    def _solve_batch(self, bs, transpose):
+        """All B right-hand sides at once: stack their owned blocks into a dense matrix with A's row
+        layout, ``KSP.matSolve`` (``matSolveTranspose``) on the hook's KSP, and wrap the solution
+        columns as Functions. Dense RHS matrices are never handed out as driver vectors; the RHS
+        Vecs were assembled (and BC-constrained) on ghosted vectors by ``assemble_partial_sum``."""
+        B = len(bs)
+        rows = self.A.getSizes()[0]              # (local, global) row layout of A
+        Bm = PETSc.Mat().createDense(size=(rows, (PETSc.DECIDE, B)), comm=self.A.getComm())
+        Bm.setUp()
+        arr = Bm.getDenseArray()                 # the local (owned rows) x B block, writable view
+        for j, b in enumerate(bs):
+            arr[:, j] = b.array                  # ``Vec.array`` of a ghosted Vec is its owned part
+        Bm.assemble()
+        X = Bm.duplicate()
+        X.assemble()
+        if transpose:
+            self._ksp.matSolveTranspose(Bm, X)
+        else:
+            self._ksp.matSolve(Bm, X)
+        cols = np.array(X.getDenseArray(), copy=True)
+        out = []
+        for j in range(B):
+            f = fem.Function(self.V_u)
+            f.x.petsc_vec.array[:] = cols[:, j]  # owned dofs, then fill the ghosts
+            f.x.scatter_forward()
+            out.append(f)
+        Bm.destroy()
+        X.destroy()
+        return out
+
     def _wrap(self, x_vec):
         """Wrap a solution PETSc vector as a Function in V_u (so it can enter later UFL derivatives)."""
         f = fem.Function(self.V_u)
         x_vec.copy(f.x.petsc_vec)
         f.x.scatter_forward()
         return f
+
+
+def _list_batch_size(vec):
+    """The FEniCSx hook's notion of a batched vector: a Python ``list`` of B Functions/Vecs. Any other
+    sequence type is refused rather than guessed at."""
+    if isinstance(vec, list):
+        return len(vec)
+    if isinstance(vec, (tuple, set, frozenset)):
+        raise TypeError('a batch of FEniCSx vectors must be a list (a tuple/set is ambiguous here)')
+    return None

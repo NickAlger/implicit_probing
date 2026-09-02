@@ -36,13 +36,18 @@ class FeatureParameterization:
         self.P = P                                  # (n_theta, m): columns are features in V_theta
         self.V = V_theta
 
-    def apply(self, x):                             # R^m -> V_theta Function (a probing direction)
+    def apply(self, x):                             # R^m -> V_theta Function (a probing direction);
+        x = np.asarray(x)                           #   (B, m) -> a LIST of B Functions (a batch)
+        if x.ndim == 2:
+            return [self.apply(row) for row in x]
         d = fem.Function(self.V)
-        d.x.array[:] = self.P @ np.asarray(x)
+        d.x.array[:] = self.P @ x
         d.x.scatter_forward()
         return d
 
-    def apply_transpose(self, theta_covec):         # V_theta-dual PETSc Vec -> R^m covector
+    def apply_transpose(self, theta_covec):         # V_theta-dual PETSc Vec -> R^m covector;
+        if isinstance(theta_covec, list):           #   a list of B Vecs -> (B, m)
+            return np.stack([self.apply_transpose(c) for c in theta_covec])
         return self.P.T @ theta_covec.array
 
 
@@ -52,13 +57,18 @@ class TopBoundarySelection:
         self.dofs = dofs
         self.V = V_q
 
-    def apply(self, obs):                           # V_q-dual PETSc Vec -> R^(#boundary dofs)
+    def apply(self, obs):                           # V_q-dual PETSc Vec -> R^(#boundary dofs);
+        if isinstance(obs, list):                   #   a list of B Vecs -> (B, #boundary dofs)
+            return np.stack([self.apply(o) for o in obs])
         return obs.array[self.dofs].copy()
 
-    def apply_transpose(self, z):                   # R^(#boundary dofs) -> V_q Function (the inner omega)
+    def apply_transpose(self, z):                   # R^(#boundary dofs) -> V_q Function (the inner omega);
+        z = np.asarray(z)                           #   (B, #boundary dofs) -> a list of B Functions
+        if z.ndim == 2:
+            return [self.apply_transpose(row) for row in z]
         w = fem.Function(self.V)
         w.x.array[:] = 0.0
-        w.x.array[self.dofs] = np.asarray(z)
+        w.x.array[self.dofs] = z
         w.x.scatter_forward()
         return w
 
@@ -175,6 +185,35 @@ class TestComposedFenics(unittest.TestCase):
         for mu in power_tuples(directions):
             self.assertEqual(forward[mu].shape, (self.ctx["m_obs"],))      # boundary observation
             self.assertEqual(reverse[mu].shape, (self.ctx["m_features"],)) # feature-space covector
+
+
+class TestComposedFenicsBatched(unittest.TestCase):
+    """Batched probes through a composed FEniCSx problem: the input map turns a (B, m) feature block
+    into a LIST of B directions, the output map lifts a (B, m_obs) block into a list of B inner
+    omegas, and the results come back as stacked numpy blocks -- member-for-member equal to a loop.
+    The two small operators above show the pattern a FEniCS-side ``LinearOperator`` needs."""
+    B = 3
+
+    @classmethod
+    def setUpClass(cls):
+        cls.ctx = _build()
+        cls.composed = ComposedProblem(cls.ctx["inner"], input_map=cls.ctx["C"], output_map=cls.ctx["W"])
+        rng = np.random.default_rng(3)
+        cls.X = rng.standard_normal((cls.B, cls.ctx["m_features"]))
+        cls.OMz = rng.standard_normal((cls.B, cls.ctx["m_obs"]))
+
+    def test_batched_matches_loop(self):
+        forward, reverse = probe(self.composed, [(self.X, 2)], self.OMz)
+        for j in range(self.B):
+            f_j, r_j = probe(self.composed, [(self.X[j], 2)], self.OMz[j])
+            for mu in f_j:
+                with self.subTest(member=j, mu=mu):
+                    got_f = forward[mu][j] if mu[0] >= 1 else forward[mu]       # forward[(0,)]: shared
+                    np.testing.assert_allclose(got_f, f_j[mu], rtol=1e-11, atol=1e-13)
+                    np.testing.assert_allclose(reverse[mu][j], r_j[mu], rtol=1e-11, atol=1e-13)
+        self.assertEqual(forward[(0,)].shape, (self.ctx["m_obs"],))
+        self.assertEqual(forward[(2,)].shape, (self.B, self.ctx["m_obs"]))
+        self.assertEqual(reverse[(0,)].shape, (self.B, self.ctx["m_features"]))   # omega batched
 
 
 if __name__ == "__main__":

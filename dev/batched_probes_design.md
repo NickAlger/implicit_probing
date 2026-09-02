@@ -1,7 +1,7 @@
 # Batched probes — design note
 
-*2026-09-02 (Nick + Claude). Status: **design settled and independently reviewed; JAX + numpy unit
-implemented (§11 step 1), FEniCSx pending**. Decisions in §9; the review record — two independent
+*2026-09-02 (Nick + Claude). Status: **design settled and independently reviewed; implemented in all three hooks
+(§11 steps 0–3), downstream T3Polynomial call sites next**. Decisions in §9; the review record — two independent
 reviewers, same brief, no shared context, findings folded in below — is §12. Measurements behind
 it: T3Polynomial's `scripts/x03_batched_probe_bench.py` and
 `dev/deq_regime_and_probe_batching_2026_09_02.md` §5, the PETSc checks in §1/§6, and the reviewers'
@@ -246,9 +246,18 @@ and the open-slot + adjoint-pairing case. Solves: `np.linalg.solve(A, b.T).T` �
      partitioning**, which composes with batching. A blocked-function-space "vectorized" form was
      considered and rejected: the kernel and its ffcx compile time scale with B, arithmetic does not
      shrink.
-  How the split falls at order 4 on the Darcy forms is to be **measured before the slot-form work**
-  (§11): the solve win alone is ~3× per probe at nx = 60 (0.53 s → ~0.15 s at B = 64), growing with
-  mesh size and B.
+  **Measured (2026-09-02, laptop, Darcy nx = 60 / 18k state dofs / MUMPS via `ksp_factory`, J = 4,
+  B = 64; one batched probe vs a loop of 64 single probes, agreement 2e-13):**
+
+  | | wall | form construction + other | integration (`_assemble` calls) | solves |
+  |---|---|---|---|---|
+  | loop of 64 | 44.3 s, 692 ms/probe | 31.6 s | 8.6 s (1216) | 4.1 s (576) |
+  | batched | **14.1 s, 221 ms/probe** | 5.3 s | 8.4 s (1153) | 0.5 s (9 multi-RHS) |
+
+  So on this machine the loop was **71% form construction, 20% integration, 9% solves** — not the
+  80%-solves split the HANDOFF numbers suggested (those solves were 60 ms each on another box; here
+  7 ms). The slot-form construction removes 83% of the first, `matSolve` 88% of the third, and the
+  integration is B× in both, as predicted. 3.1× per probe at B = 64, amortizing further with B.
 - **Order ≤ 1 matrix path (phase 2, optional).** A request whose every term is degree ≤ 1 in the
   batched vectors is a matrix product: assemble `d_theta R`, `d_u Q`, `d_theta Q` once per point and
   the whole first-order lattice — including the gradient — is sparse matrix × dense batch. This is
@@ -339,10 +348,14 @@ bit-identical to a fresh run" promise holds only within one probing mode (batche
    (`implicit_probing/batching.py`, `jax.py`, `reference_problems.py`, `composition.py`; tests in
    `test_jax.py` / `test_driver.py` / `test_reference_problems.py` / `test_composition.py`;
    `docs/jax_hook.md` "Batched probes", `docs/overview.md`, `docs/composition.md`, CHANGELOG).
-2. FEniCSx, split: **2a** `ksp_factory` injection + the `matSolve` path + ghosted-scratch assembly into
-   dense blocks + tests; Darcy passes `_mumps_lu`; **measure** the assembly/solve split at nx = 60,
-   J = 4. **2b** slot forms only if form construction dominates.
-3. MPI smoke test covering assembly; changelog; downstream T3Polynomial call sites.
+2. FEniCSx — **implemented 2026-09-02** (`fenics.py`: `ksp_factory`, list batches, `matSolve` /
+   `matSolveTranspose` on dense blocks with A's row layout filled from ghosted scratch vectors, the
+   combined form built once per request with slot coefficients; tests in `test_fenics.py` and a
+   list-aware composed case in `test_fenics_composition.py`; Darcy passes `ksp_factory=_mumps_lu`).
+   The slot forms went in with 2a rather than after it, because batched assembly needs per-member
+   assembly anyway and the measurement (§6) shows form construction was the dominant cost.
+3. MPI: the batched FEniCSx tests pass under `mpirun -n 2` (assembly included) — **done**.
+   Changelog, docs (`docs/fenics_hook.md`) — **done**. Downstream T3Polynomial call sites — next.
 
 ## 12. Review record (2026-09-02)
 

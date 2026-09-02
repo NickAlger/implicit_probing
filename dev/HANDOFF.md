@@ -1,8 +1,11 @@
 # implicit_probing — handoff / current state
 
-**Pending (2026-09-02): batched probes.** Design settled with Nick, implementation not started —
-see [`dev/batched_probes_design.md`](batched_probes_design.md) (a batch is a vector type; the
-driver is untouched; JAX + numpy + FEniCSx hooks; `KSP.matSolve` for the PDE solves).
+**Batched probes (2026-09-02): implemented in all three hooks** — JAX, numpy reference, FEniCSx —
+plus `MatrixOperator` and `FenicsImplicitProblem(ksp_factory=...)`; suites green in the jax and
+dolfinx envs and under `mpirun -n 2`. Design, decisions, review record and measurements:
+[`dev/batched_probes_design.md`](batched_probes_design.md). Open follow-ups there (§10): the
+compiled probe (JAX whole-walk jit with the point as an argument), the order-≤1 matrix path
+(FEniCSx), bucketing/chunk helpers, and the downstream T3Polynomial call sites.
 
 ## Where we are
 

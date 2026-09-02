@@ -7,7 +7,7 @@ All notable changes to `implicit_probing` are documented here. The format follow
 ## Unreleased
 
 ### Added
-- **Batched probes** (JAX hook, numpy reference, `MatrixOperator`): a direction of shape `(B, p)` or
+- **Batched probes** (JAX hook, numpy reference, `MatrixOperator`, FEniCSx hook): a direction of shape `(B, p)` or
   an `omega` of shape `(B, n_q)` is a *batch* of B independent probes at the frozen expansion point,
   handled in ONE `probe` call — one lattice walk, one multi-right-hand-side solve on the shared LU
   per node, every jet kernel `vmap`-ed over the batch. Single inputs in the same call are shared by
@@ -20,7 +20,18 @@ All notable changes to `implicit_probing` are documented here. The format follow
   with a loop of single probes to round-off. Measured on a deep-equilibrium model at J = 4:
   2.4× (D = 8) to 22× (D = 1024) faster per probe than the loop, and 1–1.8× faster than a hand-rolled
   `jax.vmap` over `probe`. New module `implicit_probing.batching` (the batch-size rule shared by the
-  hooks). Design, review record and the FEniCSx plan: `dev/batched_probes_design.md`.
+  hooks). **FEniCSx**: a Python `list` of B Functions is a batch; per lattice node the B right-hand
+  sides are solved together with `KSP.matSolve` / `matSolveTranspose` on the hook's KSP (direct
+  solvers traverse the factorization once; iterative KSPs loop internally), and the combined UFL form
+  of a request is built once with slot coefficients and assembled per member. Verified serially and
+  under `mpirun -n 2`. Measured on a mixed-form Darcy problem (18k dofs, MUMPS, J = 4, B = 64): 3.1×
+  per probe over the loop, whose cost was dominated by per-probe form construction. Design, review
+  record and measurements: `dev/batched_probes_design.md`.
+- **`FenicsImplicitProblem(..., ksp_factory=...)`**: a `PETSc.Mat -> PETSc.KSP` callable that builds
+  the hook's solver on the assembled operator (MUMPS for saddle-point operators, options-database
+  configured KSPs, iterative solvers). Default unchanged (PETSc's default LU). Custom
+  `forward_solver` / `adjoint_solver` callables still take precedence and are applied per member in
+  a batched probe.
 - **`JaxImplicitProblem.refreeze(theta0, u0)`**: move the frozen expansion point in place, keeping
   every compiled jet kernel. The kernels are jitted with the R-/Q-view closures static and the
   point traced, so multi-point probing (many expansion points) needs one reused instance; constructing a
