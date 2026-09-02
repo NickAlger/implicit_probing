@@ -267,5 +267,52 @@ class TestSolveCounts(unittest.TestCase):
         self.assertEqual(problem.n_adjoint, 0)               # reverse pass skipped entirely
 
 
+
+class TestBatchedProbesOnToy(unittest.TestCase):
+    """The numpy reference hook is the batched contract's oracle (``dev/batched_probes_design.md``):
+    its batched path assembles every member with the single-member code and stacks, so it must agree
+    with a loop of single probes exactly, honour the per-key batchedness rule, and leave the solve
+    counts untouched (one batched solve per lattice node)."""
+    B = 4
+
+    def setUp(self):
+        self.toy = make_toy_problem(seed=0)
+        rng = np.random.default_rng(7)
+        self.V = rng.standard_normal((self.B, 2))
+        self.b = rng.standard_normal(2)
+        self.OM = rng.standard_normal((self.B, 2))
+        self.om = rng.standard_normal(2)
+
+    def test_mixed_request_matches_loop_per_key(self):
+        forward, reverse = probe(self.toy, [(self.V, 2), (self.b, 1)], self.OM)
+        for j in range(self.B):
+            f_j, r_j = probe(self.toy, [(self.V[j], 2), (self.b, 1)], self.OM[j])
+            for mu in f_j:
+                with self.subTest(member=j, mu=mu):
+                    if mu[0] >= 1:                                      # batched keys
+                        np.testing.assert_allclose(forward[mu][j], f_j[mu], rtol=1e-13, atol=1e-15)
+                    else:                                               # q(theta0), d_b q: single
+                        self.assertEqual(forward[mu].ndim, 1)
+                        np.testing.assert_allclose(forward[mu], f_j[mu], rtol=1e-13, atol=1e-15)
+                    np.testing.assert_allclose(reverse[mu][j], r_j[mu], rtol=1e-13, atol=1e-15)  # omega batched
+
+    def test_direction_only_batching_leaves_gradient_single(self):
+        forward, reverse = probe(self.toy, [(self.V, 2)], self.om)
+        self.assertEqual(forward[(0,)].shape, (2,))
+        self.assertEqual(reverse[(0,)].shape, (2,))                     # the gradient does not see V
+        self.assertEqual(forward[(1,)].shape, (self.B, 2))
+        self.assertEqual(reverse[(2,)].shape, (self.B, 2))
+
+    def test_solve_counts_are_per_node_not_per_member(self):
+        problem = _CountingProblem(self.toy)
+        probe(problem, [(self.V, 2), (self.b, 1)], self.OM)
+        L = 3 * 2
+        self.assertEqual(problem.n_forward, L - 1)
+        self.assertEqual(problem.n_adjoint, L)
+
+    def test_mismatched_batch_sizes_raise(self):
+        with self.assertRaises(ValueError):
+            probe(self.toy, [(self.V, 1)], np.zeros((self.B + 1, 2)))
+
 if __name__ == '__main__':
     unittest.main()

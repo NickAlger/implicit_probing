@@ -43,15 +43,23 @@ class LinearOperator(typ.Protocol):
 class MatrixOperator:
     """A ``LinearOperator`` backed by a matrix ``M``: ``apply = M @ v``, ``apply_transpose = M.T @ v``.
 
-    Works for any ``M`` supporting ``@`` and ``.T`` (dense or sparse numpy/scipy).
+    Works for any ``M`` supporting ``@`` and ``.T`` (dense or sparse numpy/scipy). A 2-D input is a
+    BATCH of vectors with a leading batch axis (``dev/batched_probes_design.md``): ``(B, n) -> (B, m)``
+    via ``v @ M.T`` (and ``w @ M`` for the transpose) -- the rows convention, never inferred from
+    shape. Custom ``LinearOperator``s used with batched problems must handle a leading batch axis
+    themselves.
     """
     def __init__(self, matrix):
         self.matrix = matrix
 
     def apply(self, v):
+        if getattr(v, 'ndim', 1) == 2:
+            return v @ self.matrix.T
         return self.matrix @ v
 
     def apply_transpose(self, w):
+        if getattr(w, 'ndim', 1) == 2:
+            return w @ self.matrix
         return self.matrix.T @ w
 
 

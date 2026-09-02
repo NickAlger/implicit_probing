@@ -134,3 +134,21 @@ adj = validation.reverse_forward_adjointness(
     pair_input=lambda rev, d: float(np.dot(np.asarray(rev), np.asarray(d))),
     pair_output=lambda om, fwd: float(np.dot(np.asarray(om), np.asarray(fwd))))
 print(f"  reverse/forward adjointness (exact identity) max rel err: {adj:.2e}")
+
+
+# ====================================================================================================
+# BATCHED PROBES  --  many input directions at the same operating point, in one call
+# ====================================================================================================
+# A direction of shape (B, N_IN) is B independent probes at x0 (a batch), handled by ONE lattice walk:
+# every linearized solve becomes a multi-right-hand-side solve on the same LU and every jet kernel is
+# vmapped. Single inputs (here omega) are shared by every member. Results carry a leading batch axis
+# wherever they depend on the batched direction -- forward[(0,)] is q(x0), one vector, unbatched.
+B = 32
+V = rng.standard_normal((B, N_IN)); V = jnp.asarray(V / np.linalg.norm(V, axis=1, keepdims=True))
+forward_b, reverse_b = probe(problem, [(V, 3)], omega)                 # power 3 along each of B directions
+print(f"\nbatched: {B} directions at x0 in one call -> "
+      f"forward[(1,)] {tuple(forward_b[(1,)].shape)}, reverse[(3,)] {tuple(reverse_b[(3,)].shape)}, "
+      f"forward[(0,)] {tuple(forward_b[(0,)].shape)} (= q(x0), shared)")
+f_one, _ = probe(problem, [(V[5], 3)], omega)                          # the same probe, single
+print(f"  member 5 vs its single probe: max abs diff "
+      f"{max(float(jnp.abs(forward_b[mu][5] - f_one[mu]).max()) for mu in f_one if mu != (0,)):.1e}")

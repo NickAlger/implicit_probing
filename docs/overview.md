@@ -144,3 +144,10 @@ Two things to know:
 
 `reference_problems.ImplicitPolynomialProblem` is a complete, readable implementation of these three
 methods for a polynomial map — use it as a template.
+
+**Batched probes.** Because the driver never inspects a vector, a hook may treat a *batch* of B probes
+at one expansion point — B directions and/or B output functionals — as a single vector type (a
+leading batch axis for the array hooks, a list for FEniCSx) and run them in one `probe` call: one
+lattice walk, one multi-right-hand-side solve per node, results batched wherever they depend on a
+batched input. The driver stays exactly as above; the contract lives in each hook's page (see the
+[JAX hook](jax_hook.md#batched-probes)).

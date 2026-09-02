@@ -81,5 +81,41 @@ class TestComposedProblem(unittest.TestCase):
             np.testing.assert_allclose(r_c[mu], r_i[mu])
 
 
+
+class TestComposedBatchedProbes(unittest.TestCase):
+    """Batched probes flow through ``MatrixOperator`` with a leading batch axis (``v @ M.T`` / ``w @ M``),
+    for a dense matrix and -- when scipy is present -- a sparse one; member-for-member against a loop."""
+    B = 3
+
+    def setUp(self):
+        self.inner = make_toy_problem(seed=0)
+        rng = np.random.default_rng(4)
+        self.C = rng.standard_normal((2, 3))
+        self.W = rng.standard_normal((1, 2))
+        self.X = rng.standard_normal((self.B, 3))
+        self.OMz = rng.standard_normal((self.B, 1))
+
+    def _check(self, C_op, W_op):
+        composed = ComposedProblem(self.inner, C_op, W_op)
+        forward, reverse = probe(composed, [(self.X, 2)], self.OMz)
+        for j in range(self.B):
+            f_j, r_j = probe(composed, [(self.X[j], 2)], self.OMz[j])
+            for mu in f_j:
+                with self.subTest(member=j, mu=mu):
+                    got_f = forward[mu][j] if mu[0] >= 1 else forward[mu]       # forward[(0,)] is shared
+                    np.testing.assert_allclose(np.asarray(got_f), f_j[mu], rtol=1e-12, atol=1e-14)
+                    np.testing.assert_allclose(np.asarray(reverse[mu][j]), r_j[mu], rtol=1e-12, atol=1e-14)
+        self.assertEqual(np.shape(reverse[(0,)]), (self.B, 3))                  # input-space covectors
+
+    def test_dense_matrix_operators(self):
+        self._check(MatrixOperator(self.C), MatrixOperator(self.W))
+
+    def test_sparse_matrix_operators(self):
+        try:
+            import scipy.sparse as sp
+        except ImportError:                                   # scipy is not a dependency of the core
+            self.skipTest('scipy not installed')
+        self._check(MatrixOperator(sp.csr_matrix(self.C)), MatrixOperator(sp.csr_matrix(self.W)))
+
 if __name__ == '__main__':
     unittest.main()

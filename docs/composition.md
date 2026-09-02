@@ -52,6 +52,11 @@ from implicit_probing import MatrixOperator
 C = MatrixOperator(P)   # apply = P @ v,  apply_transpose = P.T @ v
 ```
 
+`MatrixOperator` also accepts a **batch** of vectors with a leading batch axis — `(B, n) -> (B, m)` via
+`v @ P.T` — so batched probes (see the [JAX hook](jax_hook.md#batched-probes)) pass through composed
+problems unchanged. A custom `LinearOperator` used with batched probes has to handle a leading batch
+axis itself (for the array hooks) or a list of vectors (for FEniCSx).
+
 For FEniCS, you typically write small operators of your own — e.g. an input map that builds a
 `theta` Function from feature coefficients, and an output selection that reads off the boundary dofs.
 A complete worked example is **`examples/fenics_composition.py`**: `theta` parameterized by low-order

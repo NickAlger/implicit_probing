@@ -52,9 +52,10 @@ forward, reverse = probe(problem, directions, omega)   # directions: ((d, max_po
 - `R`, `Q` — callables of `(theta, u)`, where `theta` has shape `(p,)` and `u` shape `(n_u,)`. `R`
   must map to the state space (`R.out_dim == n_u`, so that `A = d_u R` is square).
 - `theta0`, `u0` — the frozen point, as 1-D arrays (`u0` already solves `R(theta0, u) = 0`).
-- `directions` — `(vector, max_power)` pairs of parameter-space directions (each a `(p,)` JAX array).
-- `omega` — the output functional (a `(n_q,)` covector), a **per-probe** argument; the reverse probes
-  differentiate `omega(q)`. Pass `omega=None` for forward probes only.
+- `directions` — `(vector, max_power)` pairs of parameter-space directions (each a `(p,)` JAX array,
+  or `(B, p)` for a batch of B — see [Batched probes](#batched-probes)).
+- `omega` — the output functional (a `(n_q,)` covector, or `(B, n_q)` for a batch), a **per-probe**
+  argument; the reverse probes differentiate `omega(q)`. Pass `omega=None` for forward probes only.
 
 ## The one recipe behind `assemble_partial_sum`: Taylor-mode `jet`
 
@@ -109,6 +110,79 @@ By default `A = d_u R` is LU-factorized once and reused for every probe — forw
 factorization, adjoint solves use its transpose solve. For large problems, pass `forward_solver`
 and/or `adjoint_solver` (callables mapping a right-hand side to a solution) to plug in your own
 matrix-free / Krylov solver and preconditioner.
+
+## Batched probes
+
+The D probes you want at one expansion point are independent, and one at a time they are
+dispatch-bound: at a small state dimension a single probe is a few milliseconds of Python and XLA
+dispatch on microseconds of arithmetic. So the hook accepts a **batch**: a direction of shape `(B, p)`
+or an `omega` of shape `(B, n_q)` means B independent probes at the frozen point, handled by ONE
+`probe` call — one lattice walk, one multi-right-hand-side solve on the shared LU per node, and every
+jet kernel `vmap`-ed over the batch.
+
+```python
+V = jnp.asarray(rng.standard_normal((B, p)))          # B directions at the same point
+forward, reverse = probe(problem, [(V, 3)], omega)    # omega single: shared by every member
+forward[(2,)].shape   # (B, n_q)   -- one second directional derivative per member
+reverse[(2,)].shape   # (B, p)
+forward[(0,)].shape   # (n_q,)     -- q(theta0): one vector, shared, NOT batched
+```
+
+The rules, all of which follow from "a batch is just another vector type; the driver never looks":
+
+- **Broadcasting.** A single (1-D) input in a batched call is shared by every member. So one call
+  can batch over directions at a fixed `omega`, over `omega` at a fixed direction (B functionals,
+  one adjoint solve per node — the gradient-sketch pattern `probe(problem, [], OMEGAS)` gives B
+  gradients from one solve), or over both; a mixed request `[(V, 2), (b, 1)]` with `V` batched and
+  `b` single is fine.
+- **What comes back batched — per key.** A result is batched, shape `(B, …)`, iff its request used
+  a batched input: `forward[mu]` iff some batched direction `k` has `mu_k ≥ 1`; `reverse[mu]` iff
+  `omega` is batched or such a direction exists. Hence `forward[(0, …)] = q(theta0)` is never
+  batched; under direction-only batching the gradient `reverse[(0, …)]` is not either; in a mixed
+  request every key with power 0 on the batched axis is single. The dicts are therefore **ragged
+  across keys** — numpy-style assignment `Y[:, t] = forward[(t,)]` broadcasts the shared entries for
+  free, but `jnp.stack` over keys will not.
+- **2-D is always a batch**, even `B = 1`; a `(1, n_q)` row covector is a batch of one. Batched inputs
+  with different B raise (the check runs inside the walk, so it surfaces after the first solves).
+  Arrays of more than two dimensions raise.
+- **Solve counts are per node, not per member**, and the unbatched path is untouched — an
+  unbatched call runs the exact kernels it always did; batched values agree with a loop of single
+  probes to round-off (`1e-16`), not bit-for-bit.
+- **Compilation.** The batched kernels are the single kernels `vmap`-ed with the expansion point as a
+  shared traced argument, so — as with `refreeze` — moving the point never recompiles. A new batch
+  size (or a new pattern of which inputs are batched) recompiles every kernel structure the probe
+  touches, and a J = 4 single-direction probe has 58 of them: tens of seconds per new B. **Batch in
+  chunks of a fixed size and pad the last chunk.** Compiled executables also accumulate for the life
+  of the process (each holds memory mappings, and Linux caps those at `vm.max_map_count`, 65,530 by
+  default), so a long-lived process that keeps introducing new batch sizes or batching patterns can
+  eventually fail to compile with "LLVM compilation error: Cannot allocate memory";
+  `jax.clear_caches()` releases them.
+- **Memory.** Every lattice node keeps its incremental state and adjoint alive for the walk:
+  roughly `2 · (#nodes) · B · n_u · 8` bytes. Chunk accordingly; the hook does not chunk for you.
+- **Custom solvers** keep their single-vector contract: `forward_solver` / `adjoint_solver` are
+  applied per member (a loop), so they stay correct but do not get the multi-right-hand-side win.
+- **Composition.** `MatrixOperator` handles a leading batch axis; a custom `LinearOperator` used
+  with batched probes must accept `(B, n)` inputs itself.
+
+**Do not wrap `probe` in your own outer `jax.jit` that closes over the problem.** The frozen point
+is then baked into the compiled program as a constant, and after `refreeze` the stale program
+silently returns the OLD point's jets. The hook's own kernels, batched or not, take the point as an
+argument and are immune.
+
+Measured on a trained deep-equilibrium model (state dim 256, 16 inputs, 8 outputs, J = 4, laptop
+CPU, 8 cores), milliseconds per probe, all agreeing with the loop to `1e-15`:
+
+| D at one point | loop | user-side `jax.vmap` over `probe` | in-hook batch (this contract) | outer `jit(vmap)` (stale after refreeze) |
+|---|---|---|---|---|
+| 8 | 61 | 44 | **25** | 4.9 |
+| 64 | 63 | 12 | **11** | 2.8 |
+| 1024 | 63 | 5.0 | **2.8** | 0.96 |
+
+The in-hook path beats a hand-rolled vmap by 1–1.8× because its batched kernels dispatch as compiled
+units while the eager steps between them stay on the fast path; the remaining gap to the outer jit is
+the eager lattice walk itself, which a later "compiled probe" (the walk jitted with the point as an
+argument) would close without the stale-point trap. The reproducible benchmark is T3Polynomial's
+`scripts/x03_batched_probe_bench.py`; the design record is `dev/batched_probes_design.md`.
 
 ## Validating probes
 

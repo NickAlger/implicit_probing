@@ -1,7 +1,7 @@
 # Batched probes — design note
 
-*2026-09-02 (Nick + Claude). Status: **design settled and independently reviewed, implementation not
-started** (paused for Nick to read). Decisions in §9; the review record — two independent
+*2026-09-02 (Nick + Claude). Status: **design settled and independently reviewed; JAX + numpy unit
+implemented (§11 step 1), FEniCSx pending**. Decisions in §9; the review record — two independent
 reviewers, same brief, no shared context, findings folded in below — is §12. Measurements behind
 it: T3Polynomial's `scripts/x03_batched_probe_bench.py` and
 `dev/deq_regime_and_probe_batching_2026_09_02.md` §5, the PETSc checks in §1/§6, and the reviewers'
@@ -168,10 +168,19 @@ implements the three protocol methods for it. There is no new function and no fl
   eager ops between kernels run on the C++ fast path instead of the batching interpreter, so plain
   vmap's ~0.6 s per-call floor should drop toward the sequential walk's ~90 ms); reviewer B's
   per-kernel measurement (0.21 ms/member batched vs 0.45 single at B = 64) puts it in the same band.
-  **Step 0 of implementation is therefore a prototype measurement** at D ∈ {8, 64, 1024} against
-  user-side vmap; it decides the performance statement in the docs, not the design. The shape
-  contract is adopted for **API uniformity across the three hooks** (Nick's ruling) and because for
-  FEniCSx it is the only option. The *jit(vmap)* column of §1 (0.9 ms at B = 1024) needs the whole
+  **Step 0 of implementation was that measurement** (`x03`, library arm added; same run, same
+  machine, ms/probe; every arm agrees with the loop to ≤ 1e-15):
+
+  | D | loop | user-side vmap | **in-hook batch** | outer jit(vmap) |
+  |---|---|---|---|---|
+  | 8 | 61 | 44 | **25** | 4.9 |
+  | 64 | 63 | 12 | **11** | 2.8 |
+  | 1024 | 63 | 5.0 | **2.8** | 0.96 |
+
+  So the in-hook path is 1–1.8× better than user-side vmap (reviewer A's expectation, modestly) and
+  2.4–22× better than the loop; the outer jit stays 3–5× ahead and is exactly the stale-point trap.
+  The shape contract is adopted for **API uniformity across the three hooks** (Nick's ruling) and
+  because for FEniCSx it is the only option. The *jit(vmap)* column of §1 (0.9 ms at B = 1024) needs the whole
   lattice walk compiled as a function of the point — the "compiled probe" follow-up, whose enabling
   change is small and worth naming: a **point-as-argument view** (e.g. `problem.at(theta0, u0)`
   returning a lightweight object carrying `(w0, lu)` as a pytree argument instead of closing over
@@ -325,9 +334,11 @@ bit-identical to a fresh run" promise holds only within one probing mode (batche
 
 ## 11. Implementation order
 
-0. **JAX prototype measurement**: the batched kernel twin in-hook vs user-side vmap at D ∈ {8, 64,
-   1024} — decides the docs' performance statement (§4), not the design.
-1. JAX + numpy reference + `MatrixOperator` + tests + docs, as one unit.
+0. ~~JAX prototype measurement~~ — **done** (§4 table): in-hook batching 1–1.8× over user-side vmap.
+1. JAX + numpy reference + `MatrixOperator` + tests + docs, as one unit — **implemented 2026-09-02**
+   (`implicit_probing/batching.py`, `jax.py`, `reference_problems.py`, `composition.py`; tests in
+   `test_jax.py` / `test_driver.py` / `test_reference_problems.py` / `test_composition.py`;
+   `docs/jax_hook.md` "Batched probes", `docs/overview.md`, `docs/composition.md`, CHANGELOG).
 2. FEniCSx, split: **2a** `ksp_factory` injection + the `matSolve` path + ghosted-scratch assembly into
    dense blocks + tests; Darcy passes `_mumps_lu`; **measure** the assembly/solve split at nx = 60,
    J = 4. **2b** slot forms only if form construction dominates.

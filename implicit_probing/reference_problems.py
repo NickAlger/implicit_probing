@@ -31,6 +31,7 @@ for which the directional derivative is a single exact tensor contraction
 This is the homogenization view: choosing each ``delta`` in the theta-block or the u-block of
 ``w = (theta, u)`` yields any mixed partial ``d_theta^a d_u^b`` directly, no differentiation step.
 """
+import dataclasses
 import itertools
 import math
 import typing as typ
@@ -38,6 +39,7 @@ import typing as typ
 import numpy as np
 from numpy.typing import NDArray
 
+from implicit_probing.batching import infer_batch_size
 from implicit_probing.driver import OMEGA, PartialTerm
 from implicit_probing import validation
 
@@ -246,11 +248,11 @@ class ImplicitPolynomialProblem:
     def A(self) -> NDArray:                            # the linearized state operator A = d_u R at (theta0, u0)
         return self.state_jacobian(self.theta0, self.u0)
 
-    def solve_A(self, b: NDArray) -> NDArray:          # A u_hat = b
-        return np.linalg.solve(self.A(), b)
+    def solve_A(self, b: NDArray) -> NDArray:          # A u_hat = b;  (n_u,) -> (n_u,) or (B, n_u) -> (B, n_u)
+        return _solve_rows(self.A(), b)
 
-    def solve_A_adjoint(self, c: NDArray) -> NDArray:  # A^T v_hat = c
-        return np.linalg.solve(self.A().T, c)
+    def solve_A_adjoint(self, c: NDArray) -> NDArray:  # A^T v_hat = c, same shapes
+        return _solve_rows(self.A().T, c)
 
     # --- the end-to-end map (for independent finite-difference ground truth) ---
 
@@ -286,13 +288,48 @@ class ImplicitPolynomialProblem:
     def assemble_partial_sum(
             self,
             terms: typ.Sequence[PartialTerm],
-            omega: typ.Optional[NDArray],        # (n_q,) output functional; resolves OMEGA pairings
-    ) -> NDArray:                                # -> the assembled sum (shape depends on the terms)
+            omega: typ.Optional[NDArray],        # (n_q,) output functional; resolves OMEGA pairings.
+                                                 #   (B, n_q) = a batch of B functionals (see below)
+    ) -> NDArray:                                # -> the assembled sum (shape depends on the terms;
+                                                 #    a leading B axis for a batched request)
         """Assemble ``sum_i terms[i]`` for the polynomial problem (one numpy contraction per term).
 
         For FEniCS this is where one would build a single combined form and assemble once; the
         polynomial just loops and adds (the interface is what is being demonstrated, not a speedup).
+
+        **Batched requests** (``dev/batched_probes_design.md``): a direction, incremental, pairing or
+        ``omega`` with a leading batch axis ``(B, .)`` means B independent probes at this expansion
+        point; single vectors in the same request are shared by every member. This reference
+        implementation does the simplest correct thing -- assemble each member with the single-member
+        code and stack -- and is the oracle the JAX hook's batched path is tested against. (The
+        vectorized contractions are easy to get subtly wrong: ``tensordot`` leaves a batch axis
+        trailing so the next direction contracts it, and ``pairing @ block`` with ``(B, out)`` and
+        ``(B, out, slot)`` returns ``(B, B, slot)``.)
         """
+        B = infer_batch_size(terms, omega, _leading_batch_size)
+        if B is None:
+            return self._assemble_single(terms, omega)
+
+        def member(vec, j):                                   # row j of a batched vector; a single
+            return vec[j] if np.ndim(vec) == 2 else vec       #   vector is shared by every member
+
+        rows = []
+        for j in range(B):
+            terms_j = [dataclasses.replace(
+                t,
+                theta_dirs=tuple((member(d, j), m) for d, m in t.theta_dirs),
+                u_vecs=tuple((member(v, j), m) for v, m in t.u_vecs),
+                pairing=t.pairing if (t.pairing is None or t.pairing is OMEGA) else member(t.pairing, j))
+                for t in terms]
+            rows.append(self._assemble_single(terms_j, None if omega is None else member(omega, j)))
+        return np.stack(rows)
+
+    def _assemble_single(
+            self,
+            terms: typ.Sequence[PartialTerm],
+            omega: typ.Optional[NDArray],        # (n_q,)
+    ) -> NDArray:
+        """One (unbatched) request: the original per-term contraction loop."""
         result = None
         for t in terms:
             F = self.R if t.function == 'R' else self.Q
@@ -309,6 +346,26 @@ class ImplicitPolynomialProblem:
                 contribution = t.coefficient * (pairing @ block)                   # (slot_dim,)
             result = contribution if result is None else result + contribution
         return result
+
+
+def _leading_batch_size(vec) -> typ.Optional[int]:
+    """The array hooks' notion of a batched vector: a leading batch axis (2-D is ALWAYS a batch, even
+    B = 1); 1-D is single; anything else raises."""
+    ndim = np.ndim(vec)
+    if ndim == 1:
+        return None
+    if ndim == 2:
+        return int(np.shape(vec)[0])
+    raise ValueError(f'a vector must be 1-D (single) or 2-D (a batch, leading axis); got ndim={ndim}')
+
+
+def _solve_rows(A: NDArray, b: NDArray) -> NDArray:
+    """``A x = b`` for a single right-hand side ``(n,)`` or a batch ``(B, n)`` in the ROWS convention --
+    always explicit: ``np.linalg.solve(A, b)`` with a ``(B, n)`` ``b`` and ``B == n`` is silently wrong."""
+    b = np.asarray(b, dtype=float)
+    if b.ndim == 2:
+        return np.linalg.solve(A, b.T).T
+    return np.linalg.solve(A, b)
 
 
 def make_toy_problem(

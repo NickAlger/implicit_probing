@@ -183,6 +183,11 @@ def probe(
     ``omega`` is the output functional (a covector in the output space), a per-probe choice of quantity
     of interest. If ``omega is None``, only forward probes are computed (adjoint solves and the reverse
     pass skipped) and ``reverse`` is empty.
+
+    **Batched probes.** The driver never inspects a vector, so a hook may accept a BATCH of B probes
+    at this expansion point as a single vector type (a leading batch axis for the array hooks, a list
+    for FEniCSx): one lattice walk, one multi-right-hand-side solve per node, results batched
+    wherever they depend on a batched input. See the hook's documentation for its contract.
     """
     # Resolve the (vector, max_power) pairs to the internal label-multiset machinery: the position k of
     # each pair is its label, so the returned power-tuples come out in the order the directions are given.

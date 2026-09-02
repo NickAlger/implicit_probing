@@ -104,6 +104,20 @@ class TestImplicitProblem(unittest.TestCase):
                           - self.prob.residual(theta, u - eps * e_j)) / (2 * eps)
         np.testing.assert_allclose(A, A_fd, atol=1e-6)
 
+    def test_operator_solves_batched_rows(self):
+        # A (B, n_u) right-hand side is B solves in the ROWS convention -- including the ambiguous
+        # B == n_u case, where the wrong orientation would be silently wrong.
+        A = self.prob.A()
+        for B in (2, self.prob.n_u, 5):
+            with self.subTest(B=B):
+                rhs = np.random.default_rng(B).standard_normal((B, self.prob.n_u))
+                X = self.prob.solve_A(rhs)
+                Y = self.prob.solve_A_adjoint(rhs)
+                self.assertEqual(X.shape, rhs.shape)
+                for j in range(B):
+                    np.testing.assert_allclose(A @ X[j], rhs[j], atol=1e-12)
+                    np.testing.assert_allclose(A.T @ Y[j], rhs[j], atol=1e-12)
+
     def test_operator_solves(self):
         b = np.array([1.0, -2.0, 0.5])
         np.testing.assert_allclose(self.prob.A() @ self.prob.solve_A(b), b, atol=1e-12)
