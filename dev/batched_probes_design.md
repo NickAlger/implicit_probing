@@ -342,6 +342,29 @@ bit-identical to a fresh run" promise holds only within one probing mode (batche
   recomputes its own Taylor-mode jets through R/Q and materializes its result, whereas the fused
   program shares the point-side evaluations across all terms and nodes and fuses the elementwise
   chains. Fewer dispatches will not close it; a larger compiled unit will.
+  **Compile-time scaling of the whole-probe jit (measured 2026-09-02, DEQ, D = 64, laptop; per-term
+  = today's kernels; break-even = probes after which the whole-probe jit has repaid its extra
+  compile):**
+
+  | pattern | nodes | kernel structures | per-term: first call / steady | whole probe: first call / steady | speedup | break-even |
+  |---|---|---|---|---|---|---|
+  | (4,) | 5 | 58 | 12.6 s / 8.9 ms | **10.0 s** / 2.5 ms | 3.6× | none (compiles faster) |
+  | (6,) | 7 | 117 | 43 s / 42 ms | 56 s / 9.0 ms | 4.7× | ~400 probes |
+  | (2, 2) | 9 | 51 | 17.5 s / 42.5 ms | 27.5 s / 6.1 ms | 7.0× | ~275 probes |
+  | (3, 3) | 16 | 111 | 87 s / 275 ms | **472 s** / 36.6 ms | 7.5× | ~1,600 probes |
+
+  The whole-program compile grows superlinearly with lattice size (XLA's passes are superlinear in
+  program size; (3,3) tripped XLA's "very slow compile" alarm), while the run-time win *grows* with
+  pattern complexity. A middle option — one kernel per `assemble_partial_sum` request, the analogue
+  of the FEniCSx combined form — was prototyped and rejected: 2× at D = 8 (launch count) but only 4%
+  at D = 1024, because the redundant work is across requests, not within them. **jax's persistent
+  compilation cache** (`jax_compilation_cache_dir`) cuts the (4,) first call from 10.3 s to 4.6 s in a
+  second process (the remainder is tracing, which no cache skips); 1.4 MB on disk.
+  **Composability with custom solvers** (Nick's concern): inside the jit the point is traced, so a
+  solver must be built from the traced operator — a factory `A -> (solve, solve_adjoint)` of
+  jax-traceable functions (the JAX twin of `ksp_factory`; the default LU and `jax.scipy.sparse.linalg`
+  solvers qualify); host solvers (scipy/PETSc) bridge through `jax.pure_callback` with a
+  call-time-resolved holder for the per-point state; today's point-bound closures must be refused.
 - Bucketing of B; automatic chunking; a hook-level `broadcast(vec, B)` helper; a driver-level `Batch`
   marker (held in reserve, §3).
 - FEniCSx order-≤1 matrix path (§6, phase 2); batched custom-solver callables (`Mat -> Mat`, an
