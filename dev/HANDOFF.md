@@ -1,5 +1,9 @@
 # implicit_probing — handoff / current state
 
+**Pending (2026-09-02): batched probes.** Design settled with Nick, implementation not started —
+see [`dev/batched_probes_design.md`](batched_probes_design.md) (a batch is a vector type; the
+driver is untouched; JAX + numpy + FEniCSx hooks; `KSP.matSolve` for the PDE solves).
+
 ## Where we are
 
 **Slice 1 complete: the symbolic differentiation engine (Algorithm 1, the T4S paper, Section 4).** Pure
