@@ -168,3 +168,9 @@ multi-right-hand-side solve per node, results batched per key wherever they depe
 input. `batching.py` holds the one shared rule (the batch size of a request, `omega` counting only
 through `OMEGA` pairings). Design, decisions, independent review and measurements:
 `dev/batched_probes_design.md`; user contract: `docs/jax_hook.md` / `docs/fenics_hook.md`.
+
+**Compiled probes (JAX, 2026-09):** because `probe` is pure Python over traceable operations, the
+JAX hook can also offer the whole lattice walk for one lattice pattern as a single jitted function of
+the point (`compiled_probe`) -- opt-in, 3.6–7.5× over the eager kernels at the cost of one
+whole-program compile per pattern. Solvers compose through `solver_factory` (traceable, inlined) or
+`HostSolver` (a `pure_callback` bridge for host solvers). The driver is, again, untouched.

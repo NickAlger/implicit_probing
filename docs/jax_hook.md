@@ -107,9 +107,26 @@ cache.
 ## Solvers
 
 By default `A = d_u R` is LU-factorized once and reused for every probe — forward solves use the
-factorization, adjoint solves use its transpose solve. For large problems, pass `forward_solver`
-and/or `adjoint_solver` (callables mapping a right-hand side to a solution) to plug in your own
-matrix-free / Krylov solver and preconditioner.
+factorization, adjoint solves use its transpose solve. Two ways to change that:
+
+- **`solver_factory`** — `A -> (solve, solve_adjoint)`: JAX-traceable single-vector solvers built
+  from the assembled operator, called at construction and at every `refreeze` (the JAX twin of the
+  FEniCSx hook's `ksp_factory`). Batches are `vmap`-ed over unless a solver carries
+  `accepts_batch = True`. Any `jax.scipy.sparse.linalg` solver with a preconditioner formed from `A`
+  fits, and this is the form that also works inside a [compiled probe](#compiled-probes).
+
+  ```python
+  def krylov(A):
+      solve   = lambda b: jax.scipy.sparse.linalg.bicgstab(lambda y: A @ y,   b, tol=1e-12)[0]
+      adjoint = lambda c: jax.scipy.sparse.linalg.bicgstab(lambda y: A.T @ y, c, tol=1e-12)[0]
+      return solve, adjoint
+  problem = JaxImplicitProblem(R, Q, theta0, u0, solver_factory=krylov)
+  ```
+
+- **`forward_solver` / `adjoint_solver`** — opaque Python callables, one right-hand side in, one
+  solution out, bound to this point (e.g. closures over a factorization you computed elsewhere).
+  Applied per row in a batched probe unless the callable declares `accepts_batch = True`. They cannot
+  enter a compiled probe.
 
 ## Batched probes
 
@@ -179,10 +196,72 @@ CPU, 8 cores), milliseconds per probe, all agreeing with the loop to `1e-15`:
 | 1024 | 63 | 5.0 | **2.8** | 0.96 |
 
 The in-hook path beats a hand-rolled vmap by 1–1.8× because its batched kernels dispatch as compiled
-units while the eager steps between them stay on the fast path; the remaining gap to the outer jit is
-the eager lattice walk itself, which a later "compiled probe" (the walk jitted with the point as an
-argument) would close without the stale-point trap. The reproducible benchmark is T3Polynomial's
+units while the eager steps between them stay on the fast path. The remaining gap to the outer jit is
+not dispatch overhead but the kernels themselves — 205 separate executables per J = 4 probe, each
+recomputing jets the others already computed — and the [compiled probe](#compiled-probes) closes it
+without the stale-point trap. The reproducible benchmark is T3Polynomial's
 `scripts/x03_batched_probe_bench.py`; the design record is `dev/batched_probes_design.md`.
+
+## Compiled probes
+
+`compiled_probe(R, Q, powers)` returns the whole lattice walk for one lattice pattern as **one jitted
+function of the point**:
+
+```python
+from implicit_probing.jax import compiled_probe
+
+f = compiled_probe(R, Q, powers=(4,))            # build ONCE per lattice pattern
+for x in points:                                  # then, per expansion point:
+    u = solve_equilibrium(x)                      #   your nonlinear solve
+    forward, reverse = f(x, u, (V,), OM)          #   V (B, p) directions, OM (B, n_q) functionals
+```
+
+`f(theta0, u0, directions, omega=None)` takes the point as an **argument** — inside the program the
+operator, its factorization and every jet are one XLA program built at the traced point — so moving
+the point never recompiles and can never go stale (the failure mode of wrapping `probe` in your own
+`jax.jit`). Only a new *shape* retraces: of `theta0`, `u0`, a direction or `omega`, including the
+batch size. `directions` is a tuple with one array per power; the results are the same dicts `probe`
+returns, with the same per-key batching. `problem.compiled(powers)` builds the same thing from an
+existing problem's `R`, `Q` and `solver_factory`.
+
+**What it buys, and what it costs.** Measured on the DEQ (state dim 256, D = 64, laptop), against the
+eager batched probe above; break-even is the number of probes after which the extra compile has paid
+for itself:
+
+| pattern | eager: first call / per probe | compiled: first call / per probe | speedup | break-even |
+|---|---|---|---|---|
+| (4,) | 12.6 s / 8.9 ms | **10.0 s** / 2.5 ms | 3.6× | none — it compiles faster |
+| (6,) | 43 s / 42 ms | 56 s / 9.0 ms | 4.7× | ~400 probes |
+| (2, 2) | 17.5 s / 42.5 ms | 27.5 s / 6.1 ms | 7.0× | ~275 probes |
+| (3, 3) | 87 s / 275 ms | 472 s / 36.6 ms | 7.5× | ~1,600 probes |
+
+The compile is one program per pattern and grows superlinearly with the lattice size (XLA's passes
+are superlinear in program size), while the run-time win grows with pattern complexity. Set
+`jax.config.update("jax_compilation_cache_dir", ...)` and a second process skips the XLA compile
+(10.3 s → 4.6 s at J = 4; the remainder is tracing). Use the eager `probe` when you probe many
+different patterns a few times each; use the compiled probe when you probe one pattern many times —
+the typical case.
+
+**Solvers inside a compiled probe.** The point is traced, so a solver must be built from the traced
+operator:
+
+- `solver_factory` (above) is inlined into the program — the default LU and any traceable factory.
+- **Host solvers** — scipy, PETSc, anything that cannot be traced — bridge through
+  `HostSolver`: each solve becomes a `jax.pure_callback` that hands the concrete right-hand side(s)
+  to your callable at execution time, one host round-trip per lattice node. The callables are looked
+  up at *call* time, so bind them per point, next to the nonlinear solve you already do there:
+
+  ```python
+  host = HostSolver()
+  f = compiled_probe(R, Q, (4,), host_solver=host)
+  for x in points:
+      u = solve_equilibrium(x); lu = scipy.linalg.lu_factor(np.asarray(A_at(x, u)))
+      host.set(lambda b: scipy.linalg.lu_solve(lu, b), lambda c: scipy.linalg.lu_solve(lu, c, trans=1))
+      forward, reverse = f(x, u, (V,), OM)
+  ```
+
+- Point-bound `forward_solver` / `adjoint_solver` closures are refused: there is no concrete point
+  to bind to inside the program.
 
 ## Validating probes
 

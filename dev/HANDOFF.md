@@ -3,9 +3,11 @@
 **Batched probes (2026-09-02): implemented in all three hooks** — JAX, numpy reference, FEniCSx —
 plus `MatrixOperator` and `FenicsImplicitProblem(ksp_factory=...)`; suites green in the jax and
 dolfinx envs and under `mpirun -n 2`. Design, decisions, review record and measurements:
-[`dev/batched_probes_design.md`](batched_probes_design.md). Open follow-ups there (§10): the
-compiled probe (JAX whole-walk jit with the point as an argument), the order-≤1 matrix path
-(FEniCSx), bucketing/chunk helpers, and the downstream T3Polynomial call sites.
+[`dev/batched_probes_design.md`](batched_probes_design.md). **Also done (same day): the JAX
+compiled probe** (`compiled_probe` / `problem.compiled`: the whole lattice walk as one jitted
+function of the point, opt-in; `solver_factory` on `JaxImplicitProblem` and `HostSolver` for
+solver composability; §13 of the note) and the FEniCSx default solver (`direct_lu()`: MUMPS where
+available). Open follow-ups (§10): the order-≤1 matrix path (FEniCSx), bucketing/chunk helpers.
 
 ## Where we are
 

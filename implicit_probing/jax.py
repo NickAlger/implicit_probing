@@ -29,14 +29,15 @@ needs only numpy); install it with the ``jax`` extra.
 import functools
 import typing as typ
 
+import numpy as np
 import jax
 import jax.numpy as jnp
 from jax.experimental import jet
 
 from implicit_probing.batching import infer_batch_size
-from implicit_probing.driver import OMEGA
+from implicit_probing.driver import OMEGA, probe
 
-__all__ = ['JaxImplicitProblem']
+__all__ = ['JaxImplicitProblem', 'compiled_probe', 'lu_solver_factory', 'HostSolver']
 
 
 def _deriv_along(fn, d, order):
@@ -160,11 +161,23 @@ class JaxImplicitProblem:
     theta0, u0 : array
         The frozen expansion point; ``theta0`` has shape ``(p,)`` and ``u0`` shape ``(n_u,)``.
     forward_solver, adjoint_solver : callable | None
-        Optional custom solvers, each mapping a right-hand side to a solution. If omitted, a single
-        reused LU factorization of ``A = d_u R`` is used (adjoint via its transpose solve).
+        Optional custom solvers, each mapping ONE right-hand side ``(n_u,)`` to a solution -- opaque
+        Python callables, bound to this expansion point (e.g. closures over a factorization computed
+        elsewhere). In a batched probe they are applied per row, unless the callable carries
+        ``accepts_batch = True`` and takes a ``(B, n_u)`` block whole. They cannot enter a
+        :func:`compiled_probe` (the point is traced there); use ``solver_factory`` or a
+        :class:`HostSolver` instead.
+    solver_factory : callable | None
+        ``A -> (solve, solve_adjoint)``: builds JAX-traceable single-vector solvers from the assembled
+        operator ``A = d_u R`` (called at construction and at every ``refreeze``; batches are
+        ``vmap``-ed unless the solver carries ``accepts_batch = True``). The JAX twin of the FEniCSx
+        hook's ``ksp_factory``. Default :func:`lu_solver_factory` -- one reused LU factorization,
+        adjoint via its transpose solve. Any ``jax.scipy.sparse.linalg`` solver with a preconditioner
+        formed from ``A`` fits. Ignored when both custom solvers are given.
     """
 
-    def __init__(self, R, Q, theta0, u0, *, forward_solver=None, adjoint_solver=None):
+    def __init__(self, R, Q, theta0, u0, *, forward_solver=None, adjoint_solver=None,
+                 solver_factory=None):
         self.R = R
         self.Q = Q
         self.theta0 = jnp.asarray(theta0)
@@ -187,7 +200,9 @@ class JaxImplicitProblem:
                              'R must map to the state space (R.out_dim == u dimension)')
         self._forward_solver = forward_solver
         self._adjoint_solver = adjoint_solver
-        self._lu = jax.scipy.linalg.lu_factor(self.A) if (forward_solver is None or adjoint_solver is None) else None
+        self._solver_factory = solver_factory if solver_factory is not None else lu_solver_factory
+        self._fwd, self._adj = ((None, None) if (forward_solver is not None and adjoint_solver is not None)
+                                else self._solver_factory(self.A))
 
     def refreeze(self, theta0, u0, *, forward_solver=None, adjoint_solver=None):
         """Move the frozen expansion point to ``(theta0, u0)`` IN PLACE, keeping every compiled kernel.
@@ -205,10 +220,12 @@ class JaxImplicitProblem:
         point is a traced argument), including the batched ones.
 
         As in ``__init__``, the caller supplies a solved point (``u0`` solving ``R(theta0, u) = 0``);
-        nothing is re-solved here, but the linearized operator ``A = d_u R`` is re-assembled and
-        re-factorized. Shapes must match the original problem (the compiled kernels are
-        shape-specialized). A problem built with custom solvers must be given fresh ones (they are
-        specific to the frozen point); the default reused-LU path needs no arguments.
+        nothing is re-solved here, but the linearized operator ``A = d_u R`` is re-assembled and the
+        solvers rebuilt from it by the ``solver_factory``. Shapes must match the original problem
+        (the compiled kernels are shape-specialized). A problem built with custom solvers must be
+        given fresh ones (they are specific to the frozen point); the factory path needs no
+        arguments. The alternative to the refreeze loop is :func:`compiled_probe`, which takes the
+        point as an argument.
 
         Returns ``self``, so ``probe(problem.refreeze(x, u), ...)`` reads naturally.
         """
@@ -227,8 +244,8 @@ class JaxImplicitProblem:
         self.A = jax.jacfwd(lambda u: self.R(theta0, u))(u0)
         self._forward_solver = forward_solver
         self._adjoint_solver = adjoint_solver
-        self._lu = (jax.scipy.linalg.lu_factor(self.A)
-                    if (forward_solver is None or adjoint_solver is None) else None)
+        self._fwd, self._adj = ((None, None) if (forward_solver is not None and adjoint_solver is not None)
+                                else self._solver_factory(self.A))
         return self
 
     # --- ImplicitProblem interface ---
@@ -237,22 +254,26 @@ class JaxImplicitProblem:
         """Solve ``A x = b`` for the incremental state ``x`` (``A = d_u R`` at the expansion point).
         A batched ``b`` of shape ``(B, n_u)`` is one multi-right-hand-side solve (rows convention)."""
         if self._forward_solver is not None:
-            return _apply_per_row(self._forward_solver, b)
-        return self._lu_solve(b, trans=0)
+            return _apply_custom(self._forward_solver, b)
+        return _apply_traceable(self._fwd, b)
 
     def solve_operator_adjoint(self, c):
-        """Solve ``A* x = c`` for the incremental adjoint ``x`` (transpose of the same factorization);
-        batched ``c`` of shape ``(B, n_u)`` likewise."""
+        """Solve ``A* x = c`` for the incremental adjoint ``x`` (the transpose solve of the same
+        factorization); batched ``c`` of shape ``(B, n_u)`` likewise."""
         if self._adjoint_solver is not None:
-            return _apply_per_row(self._adjoint_solver, c)
-        return self._lu_solve(c, trans=1)
+            return _apply_custom(self._adjoint_solver, c)
+        return _apply_traceable(self._adj, c)
 
-    def _lu_solve(self, b, trans):
-        # Rows convention, ALWAYS explicit: a (B, n_u) right-hand side with B == n_u is indistinguishable
-        # from a column layout by shape alone, and the wrong orientation is silently wrong.
-        if jnp.ndim(b) == 2:
-            return jax.scipy.linalg.lu_solve(self._lu, b.T, trans=trans).T
-        return jax.scipy.linalg.lu_solve(self._lu, b, trans=trans)
+    def compiled(self, powers, *, host_solver=None):
+        """:func:`compiled_probe` for this problem's ``R``, ``Q`` and ``solver_factory``: the whole
+        lattice walk for the lattice pattern ``powers`` as ONE jitted function of the point. A
+        problem built with point-bound custom solvers cannot be compiled (pass a :class:`HostSolver`)."""
+        if (self._forward_solver is not None or self._adjoint_solver is not None) and host_solver is None:
+            raise ValueError('this problem uses point-bound forward_solver/adjoint_solver callables, '
+                             'which cannot enter a compiled probe (the point is traced there); build '
+                             'it with solver_factory=..., or pass host_solver=HostSolver(...)')
+        return compiled_probe(self.R, self.Q, powers, solver_factory=self._solver_factory,
+                              host_solver=host_solver)
 
     def assemble_partial_sum(self, terms, omega):
         """Assemble ``sum_i terms[i]``, resolving ``OMEGA`` pairings to ``omega`` (one jet per term).
@@ -316,10 +337,125 @@ class JaxImplicitProblem:
         return jnp.concatenate([pad, v], axis=-1)
 
 
-def _apply_per_row(solver, b):
-    """Apply a user-supplied ``vector -> vector`` solver to a single right-hand side, or to every row
-    of a batched ``(B, n_u)`` one (the loop fallback: custom solvers keep their single-vector
-    contract)."""
-    if jnp.ndim(b) == 2:
+def _apply_custom(solver, b):
+    """Apply an opaque user-supplied ``vector -> vector`` solver: to a single right-hand side, to a
+    ``(B, n_u)`` block whole if it declares ``accepts_batch = True``, else to every row (the loop
+    fallback: custom solvers keep their single-vector contract)."""
+    if jnp.ndim(b) == 2 and not getattr(solver, 'accepts_batch', False):
         return jnp.stack([solver(row) for row in b])
     return solver(b)
+
+
+def _apply_traceable(solver, b):
+    """Apply a factory-built (JAX-traceable) single-vector solver: ``vmap`` over a ``(B, n_u)`` block
+    unless it declares ``accepts_batch = True`` (the LU default does, with a multi-RHS solve)."""
+    if jnp.ndim(b) == 2 and not getattr(solver, 'accepts_batch', False):
+        return jax.vmap(solver)(b)
+    return solver(b)
+
+
+def lu_solver_factory(A):
+    """The default ``solver_factory``: one LU factorization of ``A``, reused; returns
+    ``(solve, solve_adjoint)``, each taking a single right-hand side or (``accepts_batch``) a
+    ``(B, n_u)`` block as ONE multi-right-hand-side triangular solve -- rows convention, always
+    explicit: a ``(B, n_u)`` block with ``B == n_u`` is indistinguishable from a column layout by
+    shape, and the wrong orientation is silently wrong."""
+    lu = jax.scipy.linalg.lu_factor(A)
+
+    def _solve(b, trans):
+        if jnp.ndim(b) == 2:
+            return jax.scipy.linalg.lu_solve(lu, b.T, trans=trans).T
+        return jax.scipy.linalg.lu_solve(lu, b, trans=trans)
+
+    def solve(b):
+        return _solve(b, 0)
+
+    def solve_adjoint(c):
+        return _solve(c, 1)
+
+    solve.accepts_batch = solve_adjoint.accepts_batch = True
+    return solve, solve_adjoint
+
+
+class HostSolver:
+    """Bridge for HOST (non-JAX) solvers -- scipy, PETSc, anything that cannot be traced -- into a
+    :func:`compiled_probe`: each solve becomes a ``jax.pure_callback`` that hands the concrete
+    right-hand side(s) to your Python callable at execution time.
+
+    The callables are looked up at CALL time, not at trace time, so set them per expansion point
+    (the refreeze contract, restated): factorize on the host next to your nonlinear solve, then
+    ``host.set(forward, adjoint)`` before calling the compiled function. Each callable maps one
+    ``(n_u,)`` right-hand side to its solution; a callable with ``accepts_batch = True`` receives a
+    ``(B, n_u)`` block whole (one host round-trip per lattice node instead of B). The cost is one host
+    round-trip per solve and no fusion across it -- which an opaque solver never allowed anyway.
+    """
+
+    def __init__(self, forward=None, adjoint=None):
+        self.forward = forward
+        self.adjoint = adjoint
+
+    def set(self, forward, adjoint):
+        """Install the solvers for the current expansion point; returns ``self``."""
+        self.forward = forward
+        self.adjoint = adjoint
+        return self
+
+    def _bridge(self, transpose):
+        def run(b_np):
+            fn = self.adjoint if transpose else self.forward
+            if fn is None:
+                raise RuntimeError('HostSolver: call set(forward, adjoint) before the compiled probe')
+            b_np = np.array(b_np, copy=True)   # a private copy: never hand the device buffer's view to host code
+            if b_np.ndim == 2 and not getattr(fn, 'accepts_batch', False):
+                return np.stack([np.asarray(fn(row), dtype=b_np.dtype) for row in b_np])
+            return np.asarray(fn(b_np), dtype=b_np.dtype)
+
+        def solve(b):
+            return jax.pure_callback(run, jax.ShapeDtypeStruct(b.shape, b.dtype), b,
+                                     vmap_method='sequential')
+
+        solve.accepts_batch = True
+        return solve
+
+
+def compiled_probe(R, Q, powers, *, solver_factory=None, host_solver=None):
+    """The whole lattice walk for one lattice pattern as ONE jitted function of the point:
+    ``f(theta0, u0, directions, omega=None) -> (forward, reverse)``.
+
+    ``powers`` is the pattern (the ``max_power`` per direction, e.g. ``(4,)`` or ``(2, 1)``);
+    ``directions`` is a tuple of one array per power, ``(p,)`` or ``(B, p)`` for a batch; ``omega``
+    is ``(n_q,)``, ``(B, n_q)`` or ``None``; the results are the same dicts ``probe`` returns, with the
+    same per-key batching. Inside the program the problem is built at the TRACED point -- ``A``, its
+    factorization (or the ``solver_factory``'s solvers) and every jet are one XLA program -- so
+    moving the point never recompiles and can never go stale: the point is an argument. Only a new
+    shape (of ``theta0``, ``u0``, ``directions`` or ``omega``, incl. the batch size) retraces, and a
+    new ``f`` (new ``R``/``Q`` closures or pattern) is a new program. Build ``f`` once per pattern.
+
+    What it buys and costs (measured, a DEQ with state dim 256, D = 64): 3.6× (J = 4), 4.7× (J = 6),
+    7× (two directions) over the eager per-term kernels; the compile is one program per pattern --
+    10 s at J = 4 (faster than the per-term kernels' 13 s), 56 s at J = 6, ~8 min for a (3, 3)
+    pattern (XLA's passes are superlinear in program size). With ``jax_compilation_cache_dir`` set,
+    a second process skips the XLA compile (10.3 s -> 4.6 s at J = 4; the rest is tracing).
+
+    Solvers: ``solver_factory`` (traceable, built from the traced ``A`` inside the program; default
+    LU) or ``host_solver`` (a :class:`HostSolver` bridging opaque host solvers via
+    ``jax.pure_callback``). Point-bound ``forward_solver``/``adjoint_solver`` closures cannot be used
+    here.
+    """
+    powers = tuple(int(p) for p in powers)
+    if any(p < 1 for p in powers):
+        raise ValueError(f'powers must be positive integers, got {powers}')
+
+    @jax.jit
+    def f(theta0, u0, directions, omega=None):
+        if len(directions) != len(powers):
+            raise ValueError(f'expected {len(powers)} direction arrays for powers {powers}, '
+                             f'got {len(directions)}')
+        if host_solver is not None:
+            prob = JaxImplicitProblem(R, Q, theta0, u0, forward_solver=host_solver._bridge(False),
+                                      adjoint_solver=host_solver._bridge(True))
+        else:
+            prob = JaxImplicitProblem(R, Q, theta0, u0, solver_factory=solver_factory)
+        return probe(prob, list(zip(directions, powers)), omega)
+
+    return f

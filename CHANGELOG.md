@@ -7,6 +7,22 @@ All notable changes to `implicit_probing` are documented here. The format follow
 ## Unreleased
 
 ### Added
+- **Compiled probes (JAX)**: `compiled_probe(R, Q, powers)` / `problem.compiled(powers)` return the
+  whole lattice walk for one lattice pattern as ONE jitted function `f(theta0, u0, directions,
+  omega=None)` -- the point is an argument, so moving it never recompiles and can never go stale;
+  only a new shape retraces. Measured on a DEQ at D = 64: 3.6x (J = 4, and it compiles faster than
+  the eager kernels), 4.7x (J = 6), 7x (two directions) over the eager batched probe; the compile is
+  one program per pattern, superlinear in lattice size (10 s at J = 4, 56 s at J = 6, ~8 min for
+  (3, 3)); `jax_compilation_cache_dir` makes it a one-time cost across processes. Opt-in; `probe`
+  stays the default.
+- **`solver_factory`** on `JaxImplicitProblem` -- `A -> (solve, solve_adjoint)`, traceable
+  single-vector solvers built from the assembled operator at construction and at every `refreeze`
+  (the JAX twin of the FEniCSx `ksp_factory`; batches `vmap`-ed unless `accepts_batch`); default
+  `lu_solver_factory`. It is the solver form that composes with compiled probes. **`HostSolver`**
+  bridges opaque host solvers (scipy, PETSc, ...) into a compiled probe via `jax.pure_callback`,
+  re-bound per point. Opaque `forward_solver` / `adjoint_solver` callables keep working on the eager
+  path (and may declare `accepts_batch = True` to receive whole blocks) but are refused by
+  `compiled`.
 - **Batched probes** (JAX hook, numpy reference, `MatrixOperator`, FEniCSx hook): a direction of shape `(B, p)` or
   an `omega` of shape `(B, n_q)` is a *batch* of B independent probes at the frozen expansion point,
   handled in ONE `probe` call — one lattice walk, one multi-right-hand-side solve on the shared LU

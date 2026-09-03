@@ -27,7 +27,7 @@ import jax.numpy as jnp
 from implicit_probing import probe
 from implicit_probing import validation
 from implicit_probing.reference_problems import make_toy_problem
-from implicit_probing.jax import JaxImplicitProblem
+from implicit_probing.jax import JaxImplicitProblem, compiled_probe, HostSolver, lu_solver_factory
 
 
 def _poly_eval(coeffs, w):
@@ -206,12 +206,6 @@ class TestJaxSolveCounts(unittest.TestCase):
         self.assertEqual(problem.n_forward, L - 1)
         self.assertEqual(problem.n_adjoint, 0)
 
-
-if __name__ == "__main__":
-    unittest.main()
-
-
-
 class TestJaxBatchedProbes(unittest.TestCase):
     """The batched-probe contract (``dev/batched_probes_design.md`` §3): a ``(B, .)`` direction or
     ``omega`` means B independent probes at the frozen point in ONE ``probe`` call; single inputs are
@@ -338,13 +332,13 @@ class TestJaxBatchedProbes(unittest.TestCase):
     def test_custom_solvers_keep_the_single_vector_contract(self):
         # A user's solver sees one right-hand side at a time even in a batched probe (the loop
         # fallback). Installed on the shared instance and removed afterwards.
-        lu_solve = self.jp._lu_solve
-        def single_only(trans):
+        fwd, adj = lu_solver_factory(self.jp.A)
+        def single_only(solve):
             def solver(rhs):
                 assert jnp.ndim(rhs) == 1, 'custom solver must be handed single vectors'
-                return lu_solve(rhs, trans=trans)
+                return solve(rhs)
             return solver
-        self.jp._forward_solver, self.jp._adjoint_solver = single_only(0), single_only(1)
+        self.jp._forward_solver, self.jp._adjoint_solver = single_only(fwd), single_only(adj)
         try:
             self._check([(self.V, 2)], self.OM, lambda j: [(self.V[j], 2)], lambda j: self.OM[j],
                         fwd_batched=lambda mu: mu[0] >= 1, rev_batched=lambda mu: True)
@@ -394,3 +388,165 @@ class TestJaxBatchedProbes(unittest.TestCase):
                     fwd_batched=lambda mu: mu[0] >= 1, rev_batched=lambda mu: True, problem=composed)
         _, reverse = probe(composed, [], OMz)                       # the gradient sketch, composed
         self.assertEqual(np.asarray(reverse[()]).shape, (self.B, 3))
+
+
+class TestSolverFactory(unittest.TestCase):
+    """``solver_factory(A) -> (solve, solve_adjoint)``: traceable single-vector solvers built from the
+    assembled operator (the JAX twin of the FEniCSx ``ksp_factory``); ``vmap``-ed over batches unless
+    ``accepts_batch``; rebuilt on ``refreeze``. Opaque custom callables keep the per-row loop unless
+    they declare ``accepts_batch``."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.toy = make_toy_problem(seed=0)
+        cls.jp = _jax_problem_from_toy(cls.toy)
+        rng = np.random.default_rng(21)
+        cls.V = jnp.asarray(rng.standard_normal((3, 2)))
+        cls.OM = jnp.asarray(rng.standard_normal((3, 2)))
+        cls.ref = probe(cls.jp, [(cls.V, 2)], cls.OM)
+
+    @classmethod
+    def tearDownClass(cls):
+        jax.clear_caches()
+
+    def _assert_matches_ref(self, forward, reverse, rtol=1e-11):
+        for mu in self.ref[0]:
+            np.testing.assert_allclose(np.asarray(forward[mu]), np.asarray(self.ref[0][mu]), rtol=rtol, atol=1e-13)
+            np.testing.assert_allclose(np.asarray(reverse[mu]), np.asarray(self.ref[1][mu]), rtol=rtol, atol=1e-13)
+
+    def test_dense_solve_factory_matches_default_lu(self):
+        dense = lambda A: (lambda x: jnp.linalg.solve(A, x), lambda x: jnp.linalg.solve(A.T, x))
+        jp = JaxImplicitProblem(self.jp.R, self.jp.Q, self.jp.theta0, self.jp.u0, solver_factory=dense)
+        self._assert_matches_ref(*probe(jp, [(self.V, 2)], self.OM))          # single solvers vmapped over batches
+
+    def test_iterative_factory_matches_to_its_tolerance(self):
+        import jax.scipy.sparse.linalg as spl
+        def krylov(A):
+            solve = lambda x: spl.bicgstab(lambda y: A @ y, x, tol=1e-13, maxiter=200)[0]
+            adjoint = lambda x: spl.bicgstab(lambda y: A.T @ y, x, tol=1e-13, maxiter=200)[0]
+            return solve, adjoint
+        jp = JaxImplicitProblem(self.jp.R, self.jp.Q, self.jp.theta0, self.jp.u0, solver_factory=krylov)
+        self._assert_matches_ref(*probe(jp, [(self.V, 2)], self.OM), rtol=1e-7)
+
+    def test_factory_is_rebuilt_on_refreeze(self):
+        calls = []
+        def counting(A):
+            calls.append(A)
+            return lu_solver_factory(A)
+        jp = JaxImplicitProblem(self.jp.R, self.jp.Q, self.jp.theta0, self.jp.u0, solver_factory=counting)
+        rng = np.random.default_rng(4)
+        theta1, u1 = jnp.asarray(rng.standard_normal(2)), jnp.asarray(rng.standard_normal(3))
+        jp.refreeze(theta1, u1)
+        self.assertEqual(len(calls), 2)                                        # built at init and at refreeze
+        fresh = JaxImplicitProblem(self.jp.R, self.jp.Q, theta1, u1)
+        f_re, r_re = probe(jp, [(self.V, 2)], self.OM)
+        f_fr, r_fr = probe(fresh, [(self.V, 2)], self.OM)
+        for mu in f_fr:
+            np.testing.assert_allclose(np.asarray(f_re[mu]), np.asarray(f_fr[mu]), rtol=1e-12, atol=1e-14)
+            np.testing.assert_allclose(np.asarray(r_re[mu]), np.asarray(r_fr[mu]), rtol=1e-12, atol=1e-14)
+
+    def test_custom_callable_with_accepts_batch_gets_whole_blocks(self):
+        fwd, adj = lu_solver_factory(self.jp.A)
+        shapes = []
+        def whole(solve):
+            def solver(rhs):
+                shapes.append(jnp.ndim(rhs)); return solve(rhs)
+            solver.accepts_batch = True
+            return solver
+        jp = JaxImplicitProblem(self.jp.R, self.jp.Q, self.jp.theta0, self.jp.u0,
+                                forward_solver=whole(fwd), adjoint_solver=whole(adj))
+        self._assert_matches_ref(*probe(jp, [(self.V, 2)], self.OM))
+        self.assertIn(2, shapes)                                                # blocks arrived whole
+        self.assertEqual(len(shapes), 5)                                        # one call per solve: 2 fwd + 3 adj
+
+
+class TestCompiledProbe(unittest.TestCase):
+    """``compiled_probe``: the whole lattice walk as ONE jitted function of the point. It must match
+    the eager probe at every key, batched or not; move with the point without retracing (the point
+    is an argument, so it can never go stale); support omega=None; compose with a solver factory
+    (inlined) and with a HostSolver (pure_callback bridge, re-bound per point); and refuse
+    point-bound custom closures."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.toy = make_toy_problem(seed=0)
+        cls.jp = _jax_problem_from_toy(cls.toy)
+        rng = np.random.default_rng(31)
+        cls.V = jnp.asarray(rng.standard_normal((3, 2)))
+        cls.b = jnp.asarray(rng.standard_normal(2))
+        cls.OM = jnp.asarray(rng.standard_normal((3, 2)))
+        cls.point1 = (jnp.asarray(rng.standard_normal(2)), jnp.asarray(rng.standard_normal(3)))
+        cls.f = staticmethod(compiled_probe(cls.jp.R, cls.jp.Q, (2, 1)))       # ONE program for the class
+                                                                                # (staticmethod: a plain function on
+                                                                                #  the class would bind as a method)
+
+    @classmethod
+    def tearDownClass(cls):
+        jax.clear_caches()
+
+    def _eager_at(self, theta, u):
+        # the eager reference at an arbitrary point, on the ONE shared instance (a fresh instance per
+        # call would recompile every per-term kernel and exhaust the process's memory mappings)
+        theta0, u0 = self.jp.theta0, self.jp.u0
+        self.jp.refreeze(theta, u)
+        try:
+            return probe(self.jp, [(self.V, 2), (self.b, 1)], self.OM)
+        finally:
+            self.jp.refreeze(theta0, u0)
+
+    def _assert_same(self, out, ref, rtol=1e-11):
+        self.assertEqual(set(out[0]), set(ref[0]))
+        for mu in ref[0]:
+            with self.subTest(mu=mu):
+                self.assertEqual(np.shape(out[0][mu]), np.shape(ref[0][mu]))    # same per-key batching
+                self.assertEqual(np.shape(out[1][mu]), np.shape(ref[1][mu]))
+                np.testing.assert_allclose(np.asarray(out[0][mu]), np.asarray(ref[0][mu]), rtol=rtol, atol=1e-13)
+                np.testing.assert_allclose(np.asarray(out[1][mu]), np.asarray(ref[1][mu]), rtol=rtol, atol=1e-13)
+
+    def test_matches_eager_and_moves_with_the_point_without_retracing(self):
+        theta0, u0 = self.jp.theta0, self.jp.u0
+        self._assert_same(self.f(theta0, u0, (self.V, self.b), self.OM), self._eager_at(theta0, u0))
+        n_programs = self.f._cache_size()
+        theta1, u1 = self.point1
+        self._assert_same(self.f(theta1, u1, (self.V, self.b), self.OM), self._eager_at(theta1, u1))
+        self.assertEqual(self.f._cache_size(), n_programs)                     # a new point is not a new program
+
+    def test_omega_none_gives_forward_only(self):
+        forward, reverse = self.f(self.jp.theta0, self.jp.u0, (self.V, self.b))
+        self.assertEqual(reverse, {})
+        ref, _ = probe(self.jp, [(self.V, 2), (self.b, 1)])
+        for mu in ref:
+            np.testing.assert_allclose(np.asarray(forward[mu]), np.asarray(ref[mu]), rtol=1e-11, atol=1e-13)
+
+    def test_solver_factory_is_inlined(self):
+        dense = lambda A: (lambda x: jnp.linalg.solve(A, x), lambda x: jnp.linalg.solve(A.T, x))
+        jp = JaxImplicitProblem(self.jp.R, self.jp.Q, self.jp.theta0, self.jp.u0, solver_factory=dense)
+        f = jp.compiled((2, 1))
+        theta1, u1 = self.point1
+        self._assert_same(f(theta1, u1, (self.V, self.b), self.OM), self._eager_at(theta1, u1))
+
+    def test_host_solver_bridge_rebinds_per_point(self):
+        import scipy.linalg
+        host = HostSolver()
+        f = compiled_probe(self.jp.R, self.jp.Q, (2, 1), host_solver=host)
+        for theta, u in ((self.jp.theta0, self.jp.u0), self.point1):
+            with self.subTest(point=float(theta[0])):
+                A = np.asarray(JaxImplicitProblem(self.jp.R, self.jp.Q, theta, u).A)   # factorize on the host
+                lu = scipy.linalg.lu_factor(A)
+                host.set(lambda x, lu=lu: scipy.linalg.lu_solve(lu, x),
+                         lambda x, lu=lu: scipy.linalg.lu_solve(lu, x, trans=1))
+                self._assert_same(f(theta, u, (self.V, self.b), self.OM), self._eager_at(theta, u))
+
+    def test_point_bound_custom_solvers_are_refused(self):
+        jp = JaxImplicitProblem(self.jp.R, self.jp.Q, self.jp.theta0, self.jp.u0,
+                                forward_solver=self.jp.solve_operator, adjoint_solver=self.jp.solve_operator_adjoint)
+        with self.assertRaises(ValueError):
+            jp.compiled((2, 1))
+
+    def test_wrong_direction_count_raises(self):
+        with self.assertRaises(ValueError):
+            self.f(self.jp.theta0, self.jp.u0, (self.V,), self.OM)
+
+
+if __name__ == "__main__":
+    unittest.main()

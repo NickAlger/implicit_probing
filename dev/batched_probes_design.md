@@ -1,7 +1,8 @@
 # Batched probes — design note
 
 *2026-09-02 (Nick + Claude). Status: **design settled and independently reviewed; implemented in all three hooks
-(§11 steps 0–3) and adopted by T3Polynomial's call sites**. Remaining follow-ups: §10. Decisions in §9; the review record — two independent
+(§11 steps 0–3), adopted by T3Polynomial's call sites, and extended with the JAX compiled probe
+(§13)**. Remaining follow-ups: §10 (minus the compiled probe). Decisions in §9; the review record — two independent
 reviewers, same brief, no shared context, findings folded in below — is §12. Measurements behind
 it: T3Polynomial's `scripts/x03_batched_probe_bench.py` and
 `dev/deq_regime_and_probe_batching_2026_09_02.md` §5, the PETSc checks in §1/§6, and the reviewers'
@@ -332,8 +333,8 @@ bit-identical to a fresh run" promise holds only within one probing mode (batche
 
 ## 10. Out of scope / follow-ups
 
-- **Compiled probe** (JAX): jit the whole lattice walk with the point as an argument — the last ~3–5×
-  (0.96 vs 2.4–2.8 ms/probe at B = 1024). Enabling change: the point-as-argument view (§4).
+- ~~**Compiled probe** (JAX)~~ — **done, §13** (`compiled_probe` / `problem.compiled`, opt-in;
+  solver composability via `solver_factory` and `HostSolver`). The measurements that decided it:
   **Where that gap lives (measured 2026-09-02, sync after every kernel, DEQ J = 4):** Python +
   dispatch is a flat 62–96 ms per call — 7.7 ms/probe at D = 8 but 0.09 ms/probe at D = 1024 — while
   the 205 kernel calls per probe (195 batched term kernels, 1 single, 9 solves) alone take 2.4–4.2×
@@ -414,3 +415,45 @@ kernel (≤ 1e-15); `refreeze` hits the cache; the outer-jit trap reproduces; `K
 `matSolveTranspose` present and correct (serial and two ranks, MUMPS); the slot-Function trick; the
 `id()`-based checks; `MatrixOperator` 2-D forms; backward compatibility (no 2-D input works today);
 the nomenclature table and the proposed rewordings.
+
+## 13. Compiled probe (JAX) — design and status (2026-09-02, Nick's go-ahead)
+
+**Ruling:** build the whole-probe unit as an opt-in entry point, keep the eager per-term path as the
+default, skip the per-request middle option; kernel reuse across lattice patterns is not a use case
+worth optimizing for (one pattern per use, rarely a few).
+
+**Design.** `compiled_probe(R, Q, powers, *, solver_factory=None, host_solver=None)` returns
+`f(theta0, u0, directions, omega=None)`, `jax.jit`-ed: inside the trace a `JaxImplicitProblem` is
+built at the TRACED point (its `jacfwd` + factorization become part of the program) and the
+unchanged `driver.probe` is called — one XLA program per (pattern, shapes incl. B, R/Q identity).
+The point is an argument, so a new point is a cached call (verified: `_cache_size()` stays 1) and
+staleness is impossible by construction. `problem.compiled(powers)` is the instance form. The
+driver, the hooks' batched paths and the eager `probe` are untouched.
+
+**Solver composability (Nick's concern), settled:**
+- `solver_factory(A) -> (solve, solve_adjoint)` on `JaxImplicitProblem`: traceable single-vector
+  solvers built from the assembled operator, rebuilt on `refreeze`, `vmap`-ed over blocks unless
+  `accepts_batch` — the JAX twin of `ksp_factory`. Default `lu_solver_factory` (the multi-RHS LU
+  path, numerically identical to before). Inlined into compiled probes.
+- `HostSolver`: a `jax.pure_callback` bridge for opaque host solvers, callables resolved at call
+  time (`host.set(forward, adjoint)` per point), one round-trip per lattice node (blocks whole).
+  **Finding:** the callback receives a zero-copy VIEW of the device buffer; handing it to scipy
+  produced a 3.5e-2 error and a glibc heap corruption. The bridge now copies its input first
+  (`np.array(b, copy=True)`); with that, every batching pattern agrees to 1e-16.
+- Point-bound `forward_solver` / `adjoint_solver` closures are refused by `compiled()` with a clear
+  error; on the eager path they keep their contract and may declare `accepts_batch = True`.
+
+**Tests** (`test_jax.py`: `TestSolverFactory`, `TestCompiledProbe`): factory vs LU (dense and
+bicgstab), rebuilt on refreeze, `accepts_batch` custom callables get whole blocks; compiled vs eager
+at every key with mixed batching, moves with the point without retracing, `omega=None`, inlined
+factory, host bridge re-bound across two points, refusal of point-bound closures, wrong direction
+count. **Docs**: `docs/jax_hook.md` "Compiled probes" + the Solvers section; CHANGELOG; ARCHITECTURE.
+
+**Status: implemented 2026-09-02.** x03 on the DEQ at D = 64: compiled probe 2.03 ms/probe = the
+outer `jit(vmap)` exactly (2.03), against 8.9 for the eager batch and 51.5 for the loop, compile
+7.3 s, and correct after moving the point (4.6e-17) where the outer jit is stale (rel. err 1.0).
+n01's `generate_jets` uses one compiled program per pattern (cached per (map, pattern) — a fresh
+`compiled_probe()` is a fresh program; 4×16 probes at J = 4 in ~1 s after the compile, agreeing
+with the eager loop to 2e-16). Test-suite lesson recorded: an eager reference built on a fresh
+instance per call recompiles every per-term kernel and hits the process's memory-mapping limit —
+reuse one instance and `refreeze`.
