@@ -8,6 +8,9 @@ compiled probe** (`compiled_probe` / `problem.compiled`: the whole lattice walk 
 function of the point, opt-in; `solver_factory` on `JaxImplicitProblem` and `HostSolver` for
 solver composability; §13 of the note) and the FEniCSx default solver (`direct_lu()`: MUMPS where
 available). Open follow-ups (§10): the order-≤1 matrix path (FEniCSx), bucketing/chunk helpers.
+**One unreproduced hard crash** of the full suite in the dolfinx env (seen once, three green reruns;
+suspects and the diagnosis recipe in [`dev/unreproduced_crash_2026_09_02.md`](unreproduced_crash_2026_09_02.md);
+`tests/conftest.py` now clears JAX caches per module).
 
 ## Where we are
 
