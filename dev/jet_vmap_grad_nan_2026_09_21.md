@@ -64,7 +64,14 @@ higher-multiplicity jet terms are broken too (order-1-only jvp does not suffice)
 nested-jvp kernels are not slower here — the O(j²)-vs-O(2^j) argument for `jet` (docs/jax_hook.md)
 does not bite at these orders; compile times were comparable (37 s vs 45 s at J = 4).
 
-## Proposed direction (not applied; revised after Nick's cost objection, 2026-09-21)
+## Proposed direction (revised after Nick's cost objection, 2026-09-21)
+
+**Ruling (Nick, 2026-09-21): option 2 is the default** — the compiled probe is the production path for
+batched JAX probes. T3Polynomial's datagen already defaults to it (`use_compiled=None` → auto).
+What it means here (still to do): document it as the recommended batched path in `docs/jax_hook.md`
+(the eager batched kernel stays for small B / varying patterns), and consider a guard on the eager
+path (warn or refuse at B·n_q ≳ 4096 for JAX problems) until the jet rule is found. Items 1, 4, 5
+remain open; 3 is dropped as a default.
 
 Nested jvp is a defensible stopgap at J ≤ 4 and a poor library default: its traced graph grows as
 2^j against jet's j² (16 vs 16 at J = 4 — hence the tie above — but 64 vs 36 at J = 6 and 256 vs
