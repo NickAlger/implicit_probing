@@ -64,11 +64,23 @@ higher-multiplicity jet terms are broken too (order-1-only jvp does not suffice)
 nested-jvp kernels are not slower here — the O(j²)-vs-O(2^j) argument for `jet` (docs/jax_hook.md)
 does not bite at these orders; compile times were comparable (37 s vs 45 s at J = 4).
 
-## Proposed change (not applied)
+## Proposed direction (not applied; revised after Nick's cost objection, 2026-09-21)
 
-1. `_deriv_along`: nested `jax.jvp` by default; keep `jet` behind an opt-in flag (or drop it) and
-   update `docs/jax_hook.md` §"The one recipe" and the cost note. 2. Add a test: batched vs
-   single probes at B ≥ 64 on a residual that is linear in θ and contains a broadcast-and-reduce
-   (the repro's F) — the existing tests use small B and residuals without structural zeros.
-3. Until then, users needing B·n_q ≳ 4096 should use `compiled_probe` (T3Polynomial's datagen
-   does, `use_compiled`) and check `np.isfinite` on every jet.
+Nested jvp is a defensible stopgap at J ≤ 4 and a poor library default: its traced graph grows as
+2^j against jet's j² (16 vs 16 at J = 4 — hence the tie above — but 64 vs 36 at J = 6 and 256 vs
+64 at J = 8), XLA's compile passes are superlinear in program size, and the number of distinct
+eager kernels grows with J too (58 at J = 4, 118 at J = 6). No measurement exists above J = 4.
+
+1. **Find the responsible jet rule and keep jet.** The repro fails with exp of a broadcast +
+   reduce inside the jet and passes with tanh of a matvec. Swap exp for a polynomial in the repro
+   to separate the exp rule from the broadcast/reduce rules; if one rule is at fault, vendor a
+   patched `jet` into the hook (it is a small pure-Python module) and/or report upstream. This
+   keeps the j² cost. First thing to do.
+2. **Compiled probe as the production path for batched JAX probes** (immune, and the faster path
+   per §13's measurements; T3Polynomial's datagen already uses it). Its high-order compile cost
+   (56 s at J = 6, minutes for two-direction patterns) is the jet-based cost already accepted.
+3. **Nested jvp as an opt-in only** (J ≤ 4, eager path, varying patterns).
+4. Add the test regardless: batched vs single probes at B ≥ 64 on a residual linear in θ with a
+   broadcast-and-reduce (the repro's F); check `np.isfinite`.
+5. Measure J = 6 compile and warm time for jet vs nested jvp on the OT problem (a few minutes, not
+   yet run — needs a machine with no other JAX compile in flight).
