@@ -37,6 +37,14 @@ returns exactly 0, the batched kernel returns 8.8e242. Reducing R with that kern
 any **(N, N) broadcast-and-reduce of the state** inside the jet (`exp((g[None,:] − C)/ε).sum(0)`,
 with or without the log, with or without the bordered row) triggers it; `tanh(A g)` does not.
 
+**Graph sensitivity (2026-09-22).** Rewriting the OT residual's linear θ-term from
+``nu0 + B @ x`` (B = nu0-scaled modes) to ``nu0 * (1 + G @ x)`` — the same function to
+round-off — makes the eager batched kernel correct at every B on the full-size problem
+(`T3Polynomial/scripts/x08` now reports ok throughout). The jax-only repro below, which uses the
+``Bm @ w[:p]`` form, still fails. So the trigger is a specific lowering of "matvec of the θ-block
+feeding an add" with a structural-zero cotangent, not the residual's mathematics; a report to jax
+should include both forms.
+
 ## Minimal jax-only reproduction (`dev/jet_vmap_grad_nan_repro_2026_09_21.py`)
 
     F(w) = concat([Bm @ w[:p] − exp((w[p:p+N][None, :] − C)/ε).sum(0), 0])      # linear in w[:p]
